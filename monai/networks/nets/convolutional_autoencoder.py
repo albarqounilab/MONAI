@@ -6,7 +6,7 @@ from monai.networks.blocks import Convolution
 from monai.networks.layers.factories import Act, Norm
 
 
-class AutoEncoderBaur(nn.Module):
+class ConvAutoEncoder(nn.Module):
     """
     Simple auto-encoder implementation as in:
     Christoph Baur, Benedikt Wiestler, Shadi Albarqouni, and Nassir Navab. Deep Autoencoding Models for Unsupervised Anomaly Segmentation in Brain MR Images. arXiv preprint arXiv:1804.04488, 2018.
@@ -31,7 +31,7 @@ class AutoEncoderBaur(nn.Module):
         :param filters_max:
             amount of filter channels at bottleneck
         """
-        super(AutoEncoderBaur, self).__init__()
+        super(ConvAutoEncoder, self).__init__()
         self.encoding_layers = nn.ModuleList()
         self.decoding_layers = nn.ModuleList()
         self.intermediate_res = intermediate_res
@@ -76,7 +76,6 @@ class AutoEncoderBaur(nn.Module):
 
         self.drop = nn.Dropout(0.2)
         self.merger = nn.Conv2d(self.filters_start, 1, 1, stride=1)
-
 
     def encode(self, x):
         z = x
