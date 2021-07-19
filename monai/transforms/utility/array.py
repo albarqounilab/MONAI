@@ -63,6 +63,7 @@ __all__ = [
     "AddExtremePointsChannel",
     "TorchVision",
     "MapLabelValue",
+    "ToRGB"
 ]
 
 
@@ -865,3 +866,26 @@ class MapLabelValue:
             np.place(out_flat, img_flat == o, t)
 
         return out_flat.reshape(img.shape)
+
+
+class ToRGB(Transform):
+    """
+    Convert the input to an np.ndarray from grayscale to RGB
+
+    """
+    def __init__(self, r_val, g_val, b_val):
+        self.r_val = r_val
+        self.g_val = g_val
+        self.b_val = b_val
+        super(ToRGB, self).__init__()
+
+    def __call__(self, img: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        """
+        Apply the transform to `img`.
+        """
+        r = np.multiply(img, self.r_val).astype(np.uint8)
+        g = np.multiply(img, self.g_val).astype(np.uint8)
+        b = np.multiply(img, self.b_val).astype(np.uint8)
+
+        img_color = np.dstack((r, g, b))
+        return img_color

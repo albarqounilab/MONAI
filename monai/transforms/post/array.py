@@ -26,6 +26,9 @@ from monai.transforms.transform import Transform
 from monai.transforms.utils import get_largest_connected_component_mask
 from monai.utils import ensure_tuple
 
+from scipy.ndimage.filters import median_filter as md
+
+
 __all__ = [
     "Activations",
     "AsDiscrete",
@@ -34,6 +37,7 @@ __all__ = [
     "MeanEnsemble",
     "VoteEnsemble",
     "ProbNMS",
+    'MedianFilter',
 ]
 
 
@@ -517,3 +521,22 @@ class ProbNMS(Transform):
             prob_map[slices] = 0
 
         return outputs
+
+
+class MedianFilter(Transform):
+    """
+    Execute median filtering on array
+    The input data can be a PyTorch Tensor with shape:  [C, H, W, D], the `C' the number of channels
+
+    Args:
+        median_kernel: int
+            the size of the blur kernel
+    """
+
+    def __init__(self, median_kernel):
+        self.median_kernel = median_kernel
+        super(MedianFilter, self).__init__()
+
+    def __call__(self, img: Union[Sequence[torch.Tensor], torch.Tensor]) -> torch.Tensor:
+        img = np.asarray([md(im_, self.median_kernel) for im_ in img])
+        return img
