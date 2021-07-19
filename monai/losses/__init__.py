@@ -24,6 +24,8 @@ from .dice import (
     generalized_dice,
     generalized_wasserstein_dice,
 )
+from .l1_loss import L1Loss
+from .cosine_embedding_loss import CosineEmbeddingLoss
 from .focal_loss import FocalLoss
 from .image_dissimilarity import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss
 from .multi_scale import MultiScaleLoss

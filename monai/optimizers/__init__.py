@@ -12,3 +12,4 @@
 from .lr_finder import LearningRateFinder
 from .novograd import Novograd
 from .utils import generate_param_groups
+from torch.optim import Adam

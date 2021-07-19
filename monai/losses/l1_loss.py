@@ -33,3 +33,4 @@ class L1Loss(_Loss):
                 same shape as input.
         """
         return self.l1(input, target)
+

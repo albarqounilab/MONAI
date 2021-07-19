@@ -11,6 +11,7 @@
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import ExponentialLR as ExponentialLRDecay
 
 __all__ = ["LinearLR", "ExponentialLR"]
 
@@ -52,3 +53,4 @@ class ExponentialLR(_LRSchedulerMONAI):
     def get_lr(self):
         r = self.last_epoch / (self.num_iter - 1)
         return [base_lr * (self.end_lr / base_lr) ** r for base_lr in self.base_lrs]
+
