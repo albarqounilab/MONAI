@@ -36,6 +36,7 @@ from monai.utils import (
 __all__ = [
     "RandGaussianNoise",
     "RandRicianNoise",
+    "RandRectangleMasking",
     "ShiftIntensity",
     "RandShiftIntensity",
     "StdShiftIntensity",
@@ -170,6 +171,60 @@ class RandRicianNoise(RandomizableTransform):
             if not isinstance(std, (int, float)):
                 raise AssertionError
             img = self._add_noise(img, mean=self.mean, std=std)
+        return img
+
+
+class RandRectangleMasking(RandomizableTransform):
+    """
+    Add Rectangle masks to image.
+
+    Args:
+        start_x_range: Tuple(int, int)
+            interval for starting x coordinate.
+        start_y_range: Tuple(int, int)
+            interval for starting y coordinate.
+        width_range: Tuple (int, int)
+            interval for with size
+        max_rectangles: int
+            max amount of rectangles (random number from 0 to max_rectangles will be drawn)
+        cval: int, default -1
+            intensity of the rectangles
+    """
+
+    def __init__(self, start_x_range: Tuple[int,  int], start_y_range: Tuple[int, int],
+                 width_range: Tuple[int, int], max_rectangles: int, cval: int = -1) -> None:
+        RandomizableTransform.__init__(self, prob=1.0)
+        self.start_x_range = start_x_range
+        self.start_y_range = start_y_range
+        self.width_range = width_range
+        self.max_rectangles = max_rectangles
+        self.start_index_x = 0
+        self.start_index_y = 0
+        self.width = 0
+        self.height = 0
+        self.mask_intensity = cval
+
+    def randomize(self, img: Union[torch.Tensor, np.ndarray]) -> None:
+        super().randomize(None)
+        if self.mask_intensity == -1:
+            perc99 = np.int(min(np.percentile(img[img > img.min() + 0.15], 99) + 0.1, 1) * 100)
+            self.mask_intensity = np.random.randint(perc99, 100) / 100 if (perc99 < 100) else 1.0
+        self.start_index_x = np.random.randint(self.start_x_range[0], self.start_x_range[1])
+        self.start_index_y = np.random.randint(self.start_y_range[0], self.start_y_range[1])
+        self.width = np.random.randint(self.width_range[0], self.width_range[1])
+        self.height = np.random.randint(self.width - self.width / 3, self.width + self.width / 3)
+
+    def __call__(self, img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
+        """
+        Apply the transform to `img`.
+        """
+        self.randomize(img)
+        for i in range(self.max_rectangles):
+            prob = np.random.randint(1, 101)
+            if prob > 50:
+                img[:, self.start_index_x:self.start_index_x + self.width,
+                self.start_index_y:self.start_index_y + self.height] = self.mask_intensity
+                self.randomize(img)
         return img
 
 
