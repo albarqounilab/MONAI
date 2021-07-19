@@ -214,9 +214,9 @@ class RandRectangleMasking(RandomizableTransform):
         self.width = np.random.randint(self.width_range[0], self.width_range[1])
         self.height = np.random.randint(self.width - self.width / 3, self.width + self.width / 3)
 
-    def __call__(self, img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
+    def __call__(self, img: Union[torch.Tensor, np.ndarray],  img2: Union[torch.Tensor, np.ndarray] = None) -> Union[torch.Tensor, np.ndarray]:
         """
-        Apply the transform to `img`.
+        Apply the transform to `img` and 'img2' (optional)
         """
         self.randomize(img)
         for i in range(self.max_rectangles):
@@ -224,8 +224,14 @@ class RandRectangleMasking(RandomizableTransform):
             if prob > 50:
                 img[:, self.start_index_x:self.start_index_x + self.width,
                 self.start_index_y:self.start_index_y + self.height] = self.mask_intensity
+                if img2 is not None:
+                    img2[:, self.start_index_x:self.start_index_x + self.width,
+                    self.start_index_y:self.start_index_y + self.height] = self.mask_intensity
                 self.randomize(img)
-        return img
+        if img2 is None:
+            return img
+        else:
+            return img, img2
 
 
 class ShiftIntensity(Transform):
