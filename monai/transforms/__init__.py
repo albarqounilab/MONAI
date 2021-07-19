@@ -90,6 +90,7 @@ from .intensity.array import (
     RandGibbsNoise,
     RandHistogramShift,
     RandKSpaceSpikeNoise,
+    RandRectangleMasking,
     RandRicianNoise,
     RandScaleIntensity,
     RandShiftIntensity,
