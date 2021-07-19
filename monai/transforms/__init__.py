@@ -190,6 +190,7 @@ from .post.array import (
     KeepLargestConnectedComponent,
     LabelToContour,
     MeanEnsemble,
+    MedianFilter,
     ProbNMS,
     VoteEnsemble,
 )
@@ -323,6 +324,7 @@ from .utility.array import (
     ToCupy,
     ToNumpy,
     ToPIL,
+    ToRGB,
     TorchVision,
     ToTensor,
     Transpose,
