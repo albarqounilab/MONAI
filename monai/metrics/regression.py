@@ -14,6 +14,7 @@ from abc import abstractmethod
 from functools import partial
 from typing import Any, Union
 
+from skimage.metrics import structural_similarity as ssim
 import torch
 
 from monai.metrics.utils import do_metric_reduction
@@ -225,6 +226,35 @@ class PSNRMetric(RegressionMetric):
         mse_out = compute_mean_error_metrics(y_pred, y, func=self.sq_func)
         psnr_val = 20 * math.log10(self.max_val) - 10 * torch.log10(mse_out)
         return psnr_val
+
+
+class SSIMMetric(RegressionMetric):
+    r"""Compute Structural similarity index measure (SSIM)
+
+
+    More info: https://en.wikipedia.org/wiki/Structural_similarity
+
+    See:
+    skimage.metrics.structural_similarity
+
+    Input `y_pred` is compared with ground truth `y`.
+    Both `y_pred` and `y` are expected to be real-valued, where `y_pred` is output from a regression model.
+    """
+
+    def __init__(
+        self,
+        data_range,
+        reduction
+    ) -> None:
+        self.data_range = data_range
+        self.reduction = reduction
+        super().__init__()
+
+    def _compute_metric(self, y_pred: torch.Tensor, y: torch.Tensor) -> Any:
+        y_pred = y_pred.float()
+        y = y.float()
+        ssim_val = ssim(y_pred, y, data_range=self.data_range, reduction=self.reduction)
+        return ssim_val
 
 
 def compute_mean_error_metrics(y_pred: torch.Tensor, y: torch.Tensor, func) -> torch.Tensor:
