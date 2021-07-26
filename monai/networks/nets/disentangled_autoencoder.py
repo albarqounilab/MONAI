@@ -8,7 +8,9 @@ class DisAutoEncoder(nn.Module):
     Disentangled AutoEncoder as in:
     Bercea, C. I., Wiestler, B., Rueckert, D., & Albarqouni, S. (2021). FedDis: Disentangled Federated Learning for Unsupervised Brain Pathology Segmentation. arXiv e-prints, arXiv-2103.
     """
-    def __init__(self, input_shape=(1, 128, 128), intermediate_res=(16, 16), kernel_size=5, use_batchnorm=True, is_dense=False, dense_size=128):
+    def __init__(self, input_shape=(1, 128, 128), intermediate_res=(16, 16), kernel_size=5, use_batchnorm=True,
+                 is_dense=False, dense_size=128, filters_start_shape=64, filters_max_shape=128, filters_start_app=16,
+                 filters_max_app=32):
         super(DisAutoEncoder, self).__init__()
         #SHAPE
         self.shape_encoding_layers = nn.ModuleList()
@@ -21,18 +23,18 @@ class DisAutoEncoder(nn.Module):
         self.is_dense = is_dense
         self.dense_size = dense_size
         self.nr_linear_neurons = 1024
-        self.filters_start = 64
-        self.filters_max = 128
-        self.filters_start_ = 16
-        self.filters_max_ = 32
+        self.filters_start_shape = filters_start_shape
+        self.filters_max_shape = filters_max_shape
+        self.filters_start_app = filters_start_app
+        self.filters_max_app = filters_max_app
 
         # ENCODER SHAPE/APPEARANCE
         num_pooling = int(np.math.log(input_shape[1], 2) - np.math.log(float(intermediate_res[0]), 2))
         filters_in = 1
         filters_in_ = 1
         for i in range(num_pooling):
-            filters_out = int(min(self.filters_max, self.filters_start * (2 ** i)))
-            filters_out_ = int(min(self.filters_max_, self.filters_start_ * (2 ** i)))
+            filters_out = int(min(self.filters_max_shape, self.filters_start_shape * (2 ** i)))
+            filters_out_ = int(min(self.filters_max_app, self.filters_start_app * (2 ** i)))
 
             # SHAPE
             self.shape_encoding_layers.append(nn.Conv2d(filters_in, filters_out, kernel_size=kernel_size,stride=2, padding=2))
@@ -65,8 +67,8 @@ class DisAutoEncoder(nn.Module):
 
 
         # DECODER
-        filters_in = self.filters_max
-        filters_in_ = self.filters_max_
+        filters_in = self.filters_max_shape
+        filters_in_ = self.filters_max_app
 
         self.shape_decoding_layers.append(nn.BatchNorm2d(filters_in) if use_batchnorm else
                                           nn.GroupNorm(int(filters_in/2), filters_in))
@@ -76,8 +78,8 @@ class DisAutoEncoder(nn.Module):
                                                nn.GroupNorm(int(filters_in_ / 2), filters_in_))
         self.appearance_decoding_layers.append(nn.ReLU())
         for i in range(num_pooling):
-            filters_out = int(max(self.filters_start, self.filters_max / (2 ** i)))
-            filters_out_ = int(max(self.filters_start_, self.filters_max_ / (2 ** i)))
+            filters_out = int(max(self.filters_start_shape, self.filters_max_shape / (2 ** i)))
+            filters_out_ = int(max(self.filters_start_app, self.filters_max_app / (2 ** i)))
 
             self.shape_decoding_layers.append(nn.ConvTranspose2d(filters_in, filters_out, kernel_size, stride=2, padding=2, output_padding=1))
             self.shape_decoding_layers.append(nn.BatchNorm2d(filters_out) if use_batchnorm else nn.GroupNorm(int(filters_out/2), filters_out))
@@ -92,7 +94,7 @@ class DisAutoEncoder(nn.Module):
         self.shape_drop = nn.Dropout(0.2)
         self.appearance_drop = nn.Dropout(0.2)
 
-        self.merger = nn.Conv2d(self.filters_start + self.filters_start_, 1, 1, stride=1)
+        self.merger = nn.Conv2d(self.filters_start_shape + self.filters_start_app, 1, 1, stride=1)
 
     def encode(self, x, path='shape'):
         z = x
