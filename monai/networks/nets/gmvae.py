@@ -13,6 +13,7 @@ from typing import Any, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 from monai.networks.blocks import Convolution, ResidualUnit
 from monai.networks.layers.factories import Act, Norm
@@ -77,8 +78,18 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
         decode_channel_list = list(channels[-2::-1]) + [out_channels]
 
         self.encode, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
-        self.intermediate, self.encoded_channels = self._get_intermediate_module(self.encoded_channels, num_inter_units)
-        self.decode, _ = self._get_decode_module(self.encoded_channels, decode_channel_list, strides[::-1] or [1])
+
+        self.w_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_mean')
+        self.w_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_log_sigma')
+        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_mean')
+        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
+        self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, self.encoded_channels, 'p_z_wc/1x1convlayer', conv_only=False)
+        self.z_wc_mu_conv, _ = self._get_convolution_layer(self.dim_w, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
+        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(self.dim_w, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma')
+
+        self.decode, _ = self._get_decode_module(self.latent_channels, decode_channel_list, strides[::-1] or [1])
+
+
 
     def _get_encode_module(
         self, in_channels: int, channels: Sequence[int], strides: Sequence[int]
@@ -92,49 +103,6 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
             layer_channels = c
 
         return encode, layer_channels
-
-    def _get_intermediate_module(self, in_channels: int, num_inter_units: int) -> Tuple[nn.Module, int]:
-        # Define some types
-        intermediate: nn.Module
-        unit: nn.Module
-
-        intermediate = nn.Identity()
-        layer_channels = in_channels
-
-        if self.inter_channels:
-            intermediate = nn.Sequential()
-
-            for i, (dc, di) in enumerate(zip(self.inter_channels, self.inter_dilations)):
-                if self.num_inter_units > 0:
-                    unit = ResidualUnit(
-                        dimensions=self.dimensions,
-                        in_channels=layer_channels,
-                        out_channels=dc,
-                        strides=1,
-                        kernel_size=self.kernel_size,
-                        subunits=self.num_inter_units,
-                        act=self.act,
-                        norm=self.norm,
-                        dropout=self.dropout,
-                        dilation=di,
-                    )
-                else:
-                    unit = Convolution(
-                        dimensions=self.dimensions,
-                        in_channels=layer_channels,
-                        out_channels=dc,
-                        strides=1,
-                        kernel_size=self.kernel_size,
-                        act=self.act,
-                        norm=self.norm,
-                        dropout=self.dropout,
-                        dilation=di,
-                    )
-
-                intermediate.add_module("inter_%i" % i, unit)
-                layer_channels = dc
-
-        return intermediate, layer_channels
 
     def _get_decode_module(
         self, in_channels: int, channels: Sequence[int], strides: Sequence[int]
@@ -213,8 +181,51 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
 
         return decode
 
+    def _get_convolution_layer(self, dim_in, dim_out, name='xx', kernel_size=1, conv_only=True, act='prelu'):
+        conv_layer = nn.Sequential()
+        conv_layer.add_module(name,
+                              Convolution(dimensions=self.dimensions, in_channels=dim_in, out_channels=dim_out,
+                                          kernel_size=kernel_size, conv_only=conv_only, act=act))
+        return conv_layer, dim_out
+
+    @staticmethod
+    def rand(input_var):
+        rand_sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
+            else torch.FloatTensor(input_var.shape).normal_()
+        return rand_sample
+
     def forward(self, x: torch.Tensor) -> Any:
+        outputs = dict()
+
+        #  Encoding network
         x = self.encode(x)
-        x = self.intermediate(x)
-        x = self.decode(x)
-        return x
+
+        #  q(z|x)
+        outputs['z_mean'] = z_mean = self.z_mu_conv(x)
+        outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(x)
+        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * self.rand(z_mean)
+
+        # q(w|x)
+        outputs['w_mean'] = w_mean = self.w_mu_conv(x)
+        outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(x)
+        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * self.rand(w_mean)
+
+        # posterior p(z|w,c)
+        z_wc_mean = self.z_wc_mu_conv(w_sampled)
+        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
+        outputs['z_wc_mean'] = z_wc_means = torch.reshape(z_wc_mean, [-1, self.dim_z, z_wc_mean.shape[2], z_wc_mean.shape[3], self.dim_c])
+        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = torch.reshape(z_wc_log_sigma, [-1, self.dim_z, z_wc_log_sigma.shape[2], z_wc_log_sigma.shape[3],
+                                                             self.dim_c])
+        outputs['z_wc_sampled'] = z_wc_sampled = \
+            z_wc_means + torch.exp(torch.tensor(-0.5 * z_wc_log_sigmas)) * self.rand(z_wc_means)
+
+        # decoding network p(x|z) parameter
+        outputs['x_rec'] = x_rec = self.decode(z_sampled)
+
+        # prior p(c) network
+        z_sample = torch.tile(torch.unsqueeze(z_sampled, -1), [1, 1, 1, 1, self.dim_c])
+        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_means), 2) * torch.exp(z_wc_log_sigmas)\
+                   - z_wc_log_sigmas + torch.log(torch.tensor(np.pi))
+        outputs['pc'] = pc = torch.softmax(torch.sum(pc_logit, 1), dim=-1)
+
+        return outputs
