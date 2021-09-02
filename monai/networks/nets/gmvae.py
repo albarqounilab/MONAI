@@ -84,8 +84,8 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
         self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_mean')
         self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
         self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, self.encoded_channels, 'p_z_wc/1x1convlayer', conv_only=False)
-        self.z_wc_mu_conv, _ = self._get_convolution_layer(self.dim_w, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
-        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(self.dim_w, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma')
+        self.z_wc_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
+        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma')
 
         self.decode, _ = self._get_decode_module(self.latent_channels, decode_channel_list, strides[::-1] or [1])
 
@@ -189,10 +189,15 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
         return conv_layer, dim_out
 
     @staticmethod
-    def rand(input_var):
-        rand_sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
-            else torch.FloatTensor(input_var.shape).normal_()
-        return rand_sample
+    def generate_tensor(input_var, value=None):
+        if value is None: # uniform sample
+            sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
+                else torch.FloatTensor(input_var.shape).normal_()
+        else:
+            sample = torch.cuda.FloatTensor(input_var.shape).fill_(value) if input_var.is_cuda \
+                else torch.FloatTensor(input_var.shape).fill_(value)
+        return sample
+
 
     def forward(self, x: torch.Tensor) -> Any:
         outputs = dict()
@@ -203,21 +208,24 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
         #  q(z|x)
         outputs['z_mean'] = z_mean = self.z_mu_conv(x)
         outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(x)
-        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * self.rand(z_mean)
+        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * self.generate_tensor(z_mean)
 
         # q(w|x)
         outputs['w_mean'] = w_mean = self.w_mu_conv(x)
         outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(x)
-        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * self.rand(w_mean)
+        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * self.generate_tensor(w_mean)
 
         # posterior p(z|w,c)
+        w_sampled = self.z_wc_conv(w_sampled)
         z_wc_mean = self.z_wc_mu_conv(w_sampled)
         z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
+        z_wc_log_sigma_inv = z_wc_log_sigma + self.generate_tensor(z_wc_log_sigma, 0.1)
         outputs['z_wc_mean'] = z_wc_means = torch.reshape(z_wc_mean, [-1, self.dim_z, z_wc_mean.shape[2], z_wc_mean.shape[3], self.dim_c])
-        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = torch.reshape(z_wc_log_sigma, [-1, self.dim_z, z_wc_log_sigma.shape[2], z_wc_log_sigma.shape[3],
-                                                             self.dim_c])
+        outputs['z_wc_log_sigma'] = \
+            z_wc_log_sigmas = torch.reshape(z_wc_log_sigma_inv, [-1, self.dim_z, z_wc_log_sigma_inv.shape[2],
+                                                                 z_wc_log_sigma_inv.shape[3], self.dim_c])
         outputs['z_wc_sampled'] = z_wc_sampled = \
-            z_wc_means + torch.exp(torch.tensor(-0.5 * z_wc_log_sigmas)) * self.rand(z_wc_means)
+            z_wc_means + torch.exp(torch.tensor(-0.5 * z_wc_log_sigmas)) * self.generate_tensor(z_wc_means)
 
         # decoding network p(x|z) parameter
         outputs['x_rec'] = x_rec = self.decode(z_sampled)

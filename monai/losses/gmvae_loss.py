@@ -70,7 +70,7 @@ class WPriorLoss(_Loss):
                 with N = nr slices, C = dim_z, H/W = height/weight of latent space
         """
         w_loss = 0.5 * torch.sum(torch.pow(w_mean, 2) + torch.exp(w_log_sigma) - w_log_sigma - 1, [1, 2, 3])
-        mean_w_loss = torch.mean(torch.tensor(w_loss))
+        mean_w_loss = torch.mean(w_loss)
         return mean_w_loss
 
 
@@ -95,7 +95,7 @@ class CPriorLoss(_Loss):
             pc: tensor of size (N, C, H, W),
                 with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
         """
-        closs1 = torch.sum(torch.multiply(pc, torch.log(torch.tensor(pc * self.dim_c + 1e-8))), [3])
+        closs1 = torch.sum(torch.multiply(pc, torch.log(pc * self.dim_c + 1e-8)), [3])
         c_lambda = torch.cuda.FloatTensor(closs1.shape).fill_(self.c_lambda)
         c_loss = torch.maximum(closs1, c_lambda)
         c_loss = torch.mean(torch.sum(c_loss, [1, 2]))
