@@ -115,7 +115,6 @@ class UpSample(nn.Sequential):
                     size=size,
                     scale_factor=None if size else scale_factor_,
                     mode=interp_mode.value,
-                    align_corners=align_corners,
                 ),
             )
         elif up_mode == UpsampleMode.PIXELSHUFFLE:

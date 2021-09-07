@@ -252,6 +252,7 @@ Act.add_factory_callable("sigmoid", lambda: nn.modules.Sigmoid)
 Act.add_factory_callable("tanh", lambda: nn.modules.Tanh)
 Act.add_factory_callable("softmax", lambda: nn.modules.Softmax)
 Act.add_factory_callable("logsoftmax", lambda: nn.modules.LogSoftmax)
+Act.add_factory_callable('identity', lambda: nn.Identity)
 
 
 @Act.factory_function("swish")

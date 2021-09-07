@@ -31,7 +31,7 @@ class Swish(nn.Module):
     Examples::
 
         >>> m = Act['swish']()
-        >>> input = torch.randn(2)
+        >>> input = torch.rand(2)
         >>> output = m(input)
     """
 
@@ -86,7 +86,7 @@ class MemoryEfficientSwish(nn.Module):
     Examples::
 
         >>> m = Act['memswish']()
-        >>> input = torch.randn(2)
+        >>> input = torch.rand(2)
         >>> output = m(input)
     """
 
@@ -112,7 +112,7 @@ class Mish(nn.Module):
     Examples::
 
         >>> m = Act['mish']()
-        >>> input = torch.randn(2)
+        >>> input = torch.rand(2)
         >>> output = m(input)
     """
 
