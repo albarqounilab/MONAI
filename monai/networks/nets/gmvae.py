@@ -71,6 +71,7 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
         self.restore_lr = restore_lr
         self.restore_steps = restore_steps
         self.tv_lambda = tv_lambda
+        self.act = 'relu'
 
         # The number of channels and strides should match
         if len(channels) != len(strides):
@@ -81,19 +82,28 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
 
         self.encode, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
 
+        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z,
+                                                                           'q_wz_x/z_mean')
+        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
+        self.z_log_sigma_conv.apply(self.weights_init)
+
         self.w_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_mean')
         self.w_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_log_sigma')
-        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_mean')
-        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
+        self.w_log_sigma_conv.apply(self.weights_init)
         self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, 64, 'p_z_wc/1x1convlayer', conv_only=False)
         self.z_wc_mu_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
         self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma', bias=False)
+        self.z_wc_log_sigma_conv.apply(self.weights_init)
 
-        self.x_z_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, 1, 'p_x_z/x_mean', kernel_size=3, conv_only=True)
-        self.x_z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, 1, 'p_x_z/x_sigma', kernel_size=3, conv_only=True)
-
-        self.decode, _ = self._get_decode_module(self.encoded_channels, decode_channel_list, strides[::-1] or [1])
+        self.decode, _ = self._get_decode_module(self.latent_channels, decode_channel_list, strides[::-1] or [1])
         self.softMax = torch.nn.Softmax()
+
+    @staticmethod
+    def weights_init(m):
+        if hasattr(m, 'weight'):
+            torch.nn.init.zeros_(m.weight)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
 
     @staticmethod
     def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int]):
@@ -121,7 +131,7 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
                                                        strides=1, kernel_size=1, conv_only=True, act='identity'))
         return decoder, layer_channels
 
-    def _get_convolution_layer(self, dim_in, dim_out, name='', kernel_size=1, conv_only=True, bias=True, norm='batch', act='leakyrelu'):
+    def _get_convolution_layer(self, dim_in, dim_out, name='', kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu'):
         conv_layer = nn.Sequential()
         conv_layer.add_module(name,
                               Convolution(dimensions=self.dimensions, in_channels=dim_in, out_channels=dim_out,
@@ -146,24 +156,38 @@ class GaussianMixtureVariationalAutoEncoder(nn.Module):
 
         #  q(z|x)
         outputs['z_mean'] = z_mean = self.z_mu_conv(x)
-        outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(x)
+        z_log_sigma_temp = self.z_log_sigma_conv(x)
+
+        upperbound = self.generate_tensor(z_log_sigma_temp, 1)
+        lowerbound = self.generate_tensor(z_log_sigma_temp, -2 * np.log(1))
+        outputs['z_log_sigma'] = z_log_sigma = z_log_sigma_temp#torch.clip(z_log_sigma_temp, lowerbound, upperbound)
+
         outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * self.generate_tensor(z_mean)
 
         # q(w|x)
         outputs['w_mean'] = w_mean = self.w_mu_conv(x)
-        outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(x)
+        w_log_sigma_temp = self.w_log_sigma_conv(x)
+
+        upperbound = self.generate_tensor(w_log_sigma_temp, 1)
+        lowerbound = self.generate_tensor(w_log_sigma_temp, -2 * np.log(1))
+        outputs['w_log_sigma'] = w_log_sigma = w_log_sigma_temp#torch.clip(w_log_sigma_temp, lowerbound, upperbound)
+
         outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * self.generate_tensor(w_mean)
 
         # posterior p(z|w,c)
         w_sampled = self.z_wc_conv(w_sampled)
         outputs['z_wc_mean'] = z_wc_means = self.z_wc_mu_conv(w_sampled)
         z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
-        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = z_wc_log_sigma + self.generate_tensor(z_wc_log_sigma, 0.1)  # Add 0.1 bias
+        z_wc_log_sigma_temp = z_wc_log_sigma + self.generate_tensor(z_wc_log_sigma, 0.1)  # Add 0.1 bias
+
+        upperbound = self.generate_tensor(z_wc_log_sigma_temp, 1)
+        lowerbound = self.generate_tensor(z_wc_log_sigma_temp, -2 * np.log(1))
+        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = z_wc_log_sigma_temp#torch.clip(z_wc_log_sigma_temp, lowerbound, upperbound)
         outputs['z_wc_sampled'] = z_wc_log_sigmas = \
             z_wc_means + torch.exp(z_wc_log_sigmas) * self.generate_tensor(z_wc_means)
 
         # decoding network p(x|z) parameter
-        outputs['x_mean'] = x_mean = self.decode(x)
+        outputs['x_mean'] = x_mean = self.decode(z_sampled)
 
         # prior p(c) network
         z_sample = torch.tile(z_sampled, [1, self.dim_c, 1, 1])

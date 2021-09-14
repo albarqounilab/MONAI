@@ -75,7 +75,7 @@ class ConditionalPriorLoss(_Loss):
         d_logvar = -1 * (z_wc_log_sigma + z_log_sigma)
         KL = (d_var + d_logvar - 1) * 0.5
         con_prior_loss = torch.sum(torch.squeeze(torch.matmul(KL, torch.unsqueeze(pc, -1)), -1), [1, 2, 3])
-        mean_con_loss = torch.mean(con_prior_loss)
+        mean_con_loss = torch.maximum(torch.cuda.FloatTensor([[100]]), torch.mean(con_prior_loss))
 
         return mean_con_loss
 
@@ -103,7 +103,7 @@ class WPriorLoss(_Loss):
                 with N = nr slices, C = dim_z, H/W = height/weight of latent space
         """
         w_loss = 0.5 * torch.sum(torch.pow(w_mean, 2) + torch.exp(w_log_sigma) - w_log_sigma - 1, [1, 2, 3])
-        mean_w_loss = torch.mean(w_loss)
+        mean_w_loss = torch.maximum(torch.cuda.FloatTensor([[2]]), torch.mean(w_loss))
 
         return mean_w_loss
 
@@ -143,6 +143,6 @@ class CPriorLoss(_Loss):
         c_lambda = self.generate_tensor(closs1, self.c_lambda)
         c_loss = torch.maximum(closs1, c_lambda)
         c_loss = torch.sum(c_loss, [1, 2])
-        mean_c_loss = torch.mean(c_loss)
+        mean_c_loss = torch.mean(c_loss)#torch.maximum(torch.cuda.FloatTensor([[700]]), torch.mean(c_loss)) # cutoff value
 
         return mean_c_loss
