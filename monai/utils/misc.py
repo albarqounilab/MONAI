@@ -27,6 +27,7 @@ from monai.utils.module import get_torch_version_tuple
 __all__ = [
     "zip_with",
     "star_zip_with",
+    "generate_tensor",
     "first",
     "issequenceiterable",
     "ensure_tuple",
@@ -65,6 +66,15 @@ def star_zip_with(op, *vals):
     """
     return zip_with(op, *vals, mapfunc=itertools.starmap)
 
+
+def generate_tensor(input_var, value=None):
+    if value is None:  # uniform sample
+        sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
+            else torch.FloatTensor(input_var.shape).normal_()
+    else:
+        sample = torch.cuda.FloatTensor(input_var.shape).fill_(value) if input_var.is_cuda \
+            else torch.FloatTensor(input_var.shape).fill_(value)
+    return sample
 
 def first(iterable, default=None):
     """

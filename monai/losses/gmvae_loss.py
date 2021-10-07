@@ -1,7 +1,9 @@
 from torch.nn.modules.loss import _Loss
 import torch
 import numpy as np
-
+from monai.utils.misc import generate_tensor
+from monai.transforms import Compose, LoadImage, AsChannelFirst, NormalizeIntensity, ScaleIntensity, SpatialPad, Resize, \
+    ToTensor
 
 class ReconLoss(_Loss):
     """
@@ -35,6 +37,51 @@ class ReconLoss(_Loss):
         p_loss = p_loss_part1 + p_loss_part2
         mean_p_loss = torch.mean(p_loss)
         return mean_p_loss
+
+
+class AtlasPriorLoss(_Loss):
+    """
+    Wrapper for pytorch GMVAE Loss
+    see You, Suhang, et al. "Unsupervised lesion detection via image restoration with a normative prior." International Conference on Medical Imaging with Deep Learning. PMLR, 2019.
+
+    """
+
+    def __init__(self, atlas, dim_c: int = 1) -> None:
+        """
+        Args
+            dim_c: int
+                the number of clusters
+        """
+        super().__init__()
+        self.atlas = atlas
+        # ld = LoadImage(image_only=True)
+        # atlas_ = ld(seg_path)
+        # mask_ = ld(mask_path)
+        # atlas_np = np.concatenate([atlas_, 1-mask_[:, :, :, np.newaxis]], axis=-1)
+        # self.atlas = torch.from_numpy(np.transpose(atlas_np, (0, 3, 1, 2)))
+        self.loss = torch.nn.CrossEntropyLoss()
+        # self.loss = torch.nn.L1Loss()
+        # self.loss = torch.nn.MSELoss()
+        self.dim_c = dim_c
+
+    def forward(self, pc: torch.Tensor, atlas=None):
+        """
+        Args:
+            z_mean: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z, H/W = height/weight of latent space
+            z_log_sigma: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z, H/W = height/weight of latent space
+            z_wc_mean: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+            z_wc_log_sigma: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+            pc: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+        """
+        if atlas is not None:
+            self.atlas = atlas
+        mean_con_loss = self.loss(pc, self.atlas)
+        return mean_con_loss
 
 
 class ConditionalPriorLoss(_Loss):
@@ -123,16 +170,6 @@ class CPriorLoss(_Loss):
         self.dim_c = dim_c
         self.c_lambda = c_lambda
 
-    @staticmethod
-    def generate_tensor(input_var, value=None):
-        if value is None:  # uniform sample
-            sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
-                else torch.FloatTensor(input_var.shape).normal_()
-        else:
-            sample = torch.cuda.FloatTensor(input_var.shape).fill_(value) if input_var.is_cuda \
-                else torch.FloatTensor(input_var.shape).fill_(value)
-        return sample
-
     def forward(self, pc: torch.Tensor):
         """
         Args:
@@ -140,7 +177,7 @@ class CPriorLoss(_Loss):
                 with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
         """
         closs1 = torch.sum(torch.multiply(pc, torch.log(pc * self.dim_c + 1e-8)), [3])
-        c_lambda = self.generate_tensor(closs1, self.c_lambda)
+        c_lambda = generate_tensor(closs1, self.c_lambda)
         c_loss = torch.maximum(closs1, c_lambda)
         c_loss = torch.sum(c_loss, [1, 2])
         mean_c_loss = torch.mean(c_loss)#torch.maximum(torch.cuda.FloatTensor([[700]]), torch.mean(c_loss)) # cutoff value

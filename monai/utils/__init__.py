@@ -48,6 +48,7 @@ from .misc import (
     fall_back_tuple,
     first,
     get_seed,
+    generate_tensor,
     has_option,
     is_scalar,
     is_scalar_tensor,

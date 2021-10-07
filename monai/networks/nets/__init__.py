@@ -34,6 +34,8 @@ from .dynunet import DynUNet, DynUnet, Dynunet, dynunet
 from .efficientnet import BlockArgs, EfficientNet, EfficientNetBN, drop_connect, get_efficientnet_image_size
 from .fullyconnectednet import FullyConnectedNet, VarFullyConnectedNet
 from .generator import Generator
+from .gmvae import GaussianMixtureVariationalAutoEncoder, GaussianMixtureVariationalAutoEncoder2, DisentangledGaussianMixtureVariationalAutoEncoder
+from .prior_vae import DisCoPMVae
 from .highresnet import HighResBlock, HighResNet
 from .netadapter import NetAdapter
 from .regressor import Regressor
