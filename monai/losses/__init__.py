@@ -32,3 +32,5 @@ from .image_dissimilarity import GlobalMutualInformationLoss, LocalNormalizedCro
 from .multi_scale import MultiScaleLoss
 from .spatial_mask import MaskedLoss
 from .tversky import TverskyLoss
+from .entropy_loss import EntropyLoss
+from .alignment_loss import StatisticsAlignmentLoss
