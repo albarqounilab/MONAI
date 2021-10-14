@@ -4,6 +4,7 @@ import numpy as np
 from monai.utils.misc import generate_tensor
 from monai.transforms import Compose, LoadImage, AsChannelFirst, NormalizeIntensity, ScaleIntensity, SpatialPad, Resize, \
     ToTensor
+from torch.distributions import Independent, Normal, kl_divergence
 
 class ReconLoss(_Loss):
     """
@@ -37,6 +38,69 @@ class ReconLoss(_Loss):
         p_loss = p_loss_part1 + p_loss_part2
         mean_p_loss = torch.mean(p_loss)
         return mean_p_loss
+
+
+class BrainPriorLoss(_Loss):
+    """
+    Wrapper for pytorch GMVAE Loss
+    see You, Suhang, et al. "Unsupervised lesion detection via image restoration with a normative prior." International Conference on Medical Imaging with Deep Learning. PMLR, 2019.
+
+    """
+
+    def __init__(self, atlas_mean, atlas_var, dim_c: int = 1) -> None:
+        """
+        Args
+            dim_c: int
+                the number of clusters
+        """
+        super().__init__()
+        self.atlas_mean = atlas_mean
+        self.atlas_var = atlas_var
+        # ld = LoadImage(image_only=True)
+        # atlas_ = ld(seg_path)
+        # mask_ = ld(mask_path)
+        # atlas_np = np.concatenate([atlas_, 1-mask_[:, :, :, np.newaxis]], axis=-1)
+        # self.atlas = torch.from_numpy(np.transpose(atlas_np, (0, 3, 1, 2)))
+        # self.loss = torch.nn.CrossEntropyLoss()
+        self.loss = torch.nn.KLDivLoss()
+        # self.loss = torch.nn.L1Loss()
+        # self.loss = torch.nn.MSELoss()
+        self.dim_c = dim_c
+
+    def forward(self, pred_mean: torch.Tensor, pred_var: torch.Tensor, atlas_mean: torch.Tensor = None,
+                atlas_var: torch.Tensor = None):
+        """
+        Args:
+            z_mean: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z, H/W = height/weight of latent space
+            z_log_sigma: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z, H/W = height/weight of latent space
+            z_wc_mean: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+            z_wc_log_sigma: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+            pc: tensor of size (N, H, W, C),
+                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
+        """
+        # id_rge = range(self.dim_c - 1)
+        # pred_mean = torch.index_select(pred_mean, 1, torch.tensor(id_rge, device='cuda')) if pred_mean.is_cuda \
+        #     else torch.index_select(pred_mean, 1, torch.tensor(id_rge))
+        # pred_var = torch.index_select(pred_var, 1, torch.tensor(id_rge, device='cuda')) if pred_var.is_cuda \
+        #     else torch.index_select(pred_var, 1, torch.tensor(id_rge))
+
+        if atlas_mean is not None:
+            self.atlas_mean = atlas_mean
+            self.atlas_var = atlas_var
+        # atlas_dist = Independent(Normal(self.atlas_mean, torch.exp(self.atlas_var)), 4)
+        # pred_dist = Independent(Normal(pred_mean, torch.exp(pred_var)), 4)
+        # kld = kl_divergence(atlas_dist, pred_dist) #self.loss(self.atlas_mean, pred_mean)
+        # kld = self.loss(pred_dist, atlas_dist)
+        d_mu_2 = torch.pow(torch.subtract(self.atlas_mean, pred_mean), 2)
+        d_var = (torch.exp(self.atlas_var) + d_mu_2) * (torch.exp(pred_var) + 1e-6)
+        d_logvar = -1 * (self.atlas_var + pred_var)
+        kld = torch.sum((d_var + d_logvar - 1), [1, 2, 3]) * 0.5
+
+        return torch.mean(kld)
 
 
 class AtlasPriorLoss(_Loss):

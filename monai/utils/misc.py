@@ -67,10 +67,12 @@ def star_zip_with(op, *vals):
     return zip_with(op, *vals, mapfunc=itertools.starmap)
 
 
-def generate_tensor(input_var, value=None):
+def generate_tensor(input_var, value=None, atlas_mean=None, atlas_var=None):
+    if atlas_mean is not None:
+        return torch.normal(atlas_mean, atlas_var/2)
     if value is None:  # uniform sample
         sample = torch.cuda.FloatTensor(input_var.shape).normal_() if input_var.is_cuda \
-            else torch.FloatTensor(input_var.shape).normal_()
+            else torch.FloatTensor(input_var.shape).normal_(0, 1)
     else:
         sample = torch.cuda.FloatTensor(input_var.shape).fill_(value) if input_var.is_cuda \
             else torch.FloatTensor(input_var.shape).fill_(value)

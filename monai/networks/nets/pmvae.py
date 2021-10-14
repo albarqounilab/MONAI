@@ -80,20 +80,20 @@ class DisCoPMVae(nn.Module):
 
         self.encoded_channels = in_channels
         channels_appearance = [int(channel / 4) for channel in channels]
-        self.encode_shape, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides, name='_shape')
+        self.encode_shape, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
         self.encode_appearance, self.encoded_app_channels = \
             self._get_encode_module(in_channels + 1, channels_appearance,  strides, name='_appearance')
 
-        self.zA_mu_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_mean_appearance')
-        self.zA_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_log_sigma_appearance')
+        self.zA_mu_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_mean')
+        self.zA_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_log_sigma')
         self.zA_log_sigma_conv.apply(self.weights_init)
 
-        self.zS_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_mean_shape', act='sigmoid')
-        self.zS_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_log_sigma_shape', act='sigmoid')
+        self.zS_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_mean')
+        self.zS_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_log_sigma', bias=False)
         self.zS_log_sigma_conv.apply(self.weights_init)
 
-        self.decode, _ = self._get_decode_module(self.dim_z + self.dim_z * self.dim_c, channels, strides, out_channels)
-        # self.softMax = torch.nn.Softmax(dim=1)
+        self.decode, _ = self._get_decode_module(self.dim_z + self.dim_z * self.dim_c - 1, channels, strides, out_channels)
+        # self.softMax = torch.nn.Softmax()
         self.softMax = torch.nn.Sigmoid()
 
     @staticmethod
@@ -127,17 +127,17 @@ class DisCoPMVae(nn.Module):
         layer_channels = in_channels
         decoder = nn.Sequential()
         for i, (c, s) in enumerate(zip(channels, strides)):
-            decoder.add_module("shape_decode_down_%i" % i,
+            decoder.add_module("decode_down_%i" % i,
                                Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
                                            strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
             layer_channels = c
         for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            decoder.add_module("shape_decode_up_%i" % i,
+            decoder.add_module("decode_up_%i" % i,
                                Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
                                            strides=s, kernel_size=5, norm='batch', act='leakyrelu', is_transposed=True))
             layer_channels = c
 
-        decoder.add_module("shape_decode_final", Convolution(dimensions=2, in_channels=layer_channels, out_channels=out_ch,
+        decoder.add_module("decode_final", Convolution(dimensions=2, in_channels=layer_channels, out_channels=out_ch,
                                                        strides=1, kernel_size=1, conv_only=True, act='identity'))
         return decoder, layer_channels
 
@@ -148,12 +148,11 @@ class DisCoPMVae(nn.Module):
                                           kernel_size=kernel_size, conv_only=conv_only, bias=bias, norm=norm, act=act))
         return conv_layer, dim_out
 
-    def forward(self, x: torch.Tensor, scanner: torch.Tensor,
-                atlas_mean: torch.Tensor = None, atlas_var: torch.Tensor = None) -> Any:
+    def forward(self, x: torch.Tensor, scanner: torch.Tensor) -> Any:
         outputs = dict()
 
         #  Encoding network
-        zS_enc = self.encode_shape(x)
+        z_enc = self.encode_shape(x)
         zA_enc = self.encode_appearance(torch.cat([x, scanner], dim=1))
 
         #  q(zA|x)
@@ -161,30 +160,20 @@ class DisCoPMVae(nn.Module):
         outputs['zA_log_sigma'] = zA_log_sigma = self.zA_log_sigma_conv(zA_enc)
         outputs['zA_sampled'] = zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * generate_tensor(zA_mean)
 
-        # posterior p(zS|x)
-        outputs['zS_mean'] = zS_means = self.zS_mu_conv(zS_enc)
-        outputs['zS_log_sigma'] = zS_log_sigmas = self.zS_log_sigma_conv(zS_enc)
-        #zS_log_sigma + generate_tensor(zS_log_sigma, 0.1)  # Add 0.1 bias
-        if atlas_mean is not None:
-            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * \
-                                                 generate_tensor(zS_means, atlas_mean=atlas_mean, atlas_var=atlas_var)
-        else:
-            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * generate_tensor(zS_means)
+        # posterior p(zS|xls)
+        outputs['zS_mean'] = zS_means = self.zS_mu_conv(z_enc)
+        zS_log_sigma = self.zS_log_sigma_conv(z_enc)
+        outputs['zS_log_sigma'] = zS_log_sigmas = zS_log_sigma + generate_tensor(zS_log_sigma, 0.1)  # Add 0.1 bias
+        outputs['zS_sampled'] = zS_sampled = \
+            zS_means + torch.exp(zS_log_sigmas) * generate_tensor(zS_means)
         # outputs['zS_sampled'] = zS_sampled = z_wc_means + torch.exp(0.5 * z_wc_log_sigma) * generate_tensor(z_wc_means)
 
         # tissue map p(c)
         outputs['pc'] = self.softMax(zS_sampled)
 
         # decoding network p(x|z) parameter
-        # id_rge = range(self.dim_c - 1, self.dim_c)
-        # zS_anomaly = torch.index_select(zS_sampled, 1, torch.tensor(id_rge, device='cuda')) if zS_sampled.is_cuda \
-        #     else torch.index_select(zS_sampled, 1, torch.tensor(id_rge))
-        # zS_zeros = torch.zeros_like(zS_anomaly)
-        # id_rge = range(self.dim_c - 1)
-        # zS_sampled = torch.index_select(zS_sampled, 1, torch.tensor(id_rge, device='cuda')) if zS_sampled.is_cuda \
-        #     else torch.index_select(zS_sampled, 1, torch.tensor(id_rge))
-        # outputs['x_mean'] = self.decode(torch.cat([torch.cat([zS_sampled, zS_zeros], dim=1), zA_sampled], dim=1))
-        # outputs['x_anomaly'] = self.decode(torch.cat([torch.cat([zS_sampled, zS_anomaly], dim=1), zA_sampled], dim=1))
-        outputs['x_mean'] = self.decode(torch.cat([zS_sampled, zA_sampled], dim=1))
-        outputs['x_anomaly'] = self.decode(torch.cat([zS_sampled, zA_sampled], dim=1))
+        id_rge = range(self.dim_c - 1)  # TODO check this
+        zS_wo_anomaly = torch.index_select(zS_sampled, 1, torch.tensor(id_rge, device='cuda')) if zS_sampled.is_cuda \
+            else torch.index_select(zS_sampled, 1, torch.tensor(id_rge))
+        outputs['x_mean'] = self.decode(torch.cat([zS_wo_anomaly, zA_sampled], dim=1))
         return outputs
