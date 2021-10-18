@@ -91,14 +91,19 @@ class BrainPriorLoss(_Loss):
         if atlas_mean is not None:
             self.atlas_mean = atlas_mean
             self.atlas_var = atlas_var
-        # atlas_dist = Independent(Normal(self.atlas_mean, torch.exp(self.atlas_var)), 4)
-        # pred_dist = Independent(Normal(pred_mean, torch.exp(pred_var)), 4)
-        # kld = kl_divergence(atlas_dist, pred_dist) #self.loss(self.atlas_mean, pred_mean)
-        # kld = self.loss(pred_dist, atlas_dist)
-        d_mu_2 = torch.pow(torch.subtract(self.atlas_mean, pred_mean), 2)
-        d_var = (torch.exp(self.atlas_var) + d_mu_2) * (torch.exp(pred_var) + 1e-6)
-        d_logvar = -1 * (self.atlas_var + pred_var)
-        kld = torch.sum((d_var + d_logvar - 1), [1, 2, 3]) * 0.5
+
+        b, c = self.atlas_mean.shape[0], self.atlas_mean.shape[1]
+
+        mu_atlas, logsigma_atlas, mu_pred, logsigma_pred = \
+            self.atlas_mean.view(b,c,-1), self.atlas_var.view(b,c,-1), pred_mean.view(b,c,-1), pred_var.view(b,c,-1)
+        invsigma_atlas = 1 / torch.exp(logsigma_atlas)
+
+        log_det_pred = torch.squeeze(torch.sum(logsigma_pred, dim=2, keepdim=True))
+        trace = torch.squeeze(torch.sum(invsigma_atlas * torch.exp(logsigma_pred), dim=2, keepdim=True))
+        third_term = torch.matmul(torch.transpose(torch.unsqueeze(mu_atlas - mu_pred, -1), 2, 3),
+                     torch.unsqueeze(invsigma_atlas * (mu_atlas - mu_pred), -1))
+
+        kld = torch.mean(0.5 * (-log_det_pred + trace + third_term))
 
         return torch.mean(kld)
 
@@ -191,7 +196,7 @@ class ConditionalPriorLoss(_Loss):
         return mean_con_loss
 
 
-class WPriorLoss(_Loss):
+class NormalPriorLoss(_Loss):
     """
     Wrapper for pytorch GMVAE Loss
     see You, Suhang, et al. "Unsupervised lesion detection via image restoration with a normative prior." International Conference on Medical Imaging with Deep Learning. PMLR, 2019.
@@ -205,7 +210,7 @@ class WPriorLoss(_Loss):
         """
         super().__init__()
 
-    def forward(self, w_mean: torch.Tensor, w_log_sigma: torch.Tensor):
+    def forward(self, z_mean: torch.Tensor, z_log_sigma: torch.Tensor):
         """
         Args:
             w_mean: tensor of size (N, C, H, W),
@@ -213,10 +218,10 @@ class WPriorLoss(_Loss):
             w_log_sigma: tensor of size (N, C, H, W),
                 with N = nr slices, C = dim_z, H/W = height/weight of latent space
         """
-        w_loss = 0.5 * torch.sum(torch.pow(w_mean, 2) + torch.exp(w_log_sigma) - w_log_sigma - 1, [1, 2, 3])
-        mean_w_loss = torch.maximum(torch.cuda.FloatTensor([[2]]), torch.mean(w_loss))
+        z_loss = 0.5 * torch.sum(torch.pow(z_mean, 2) + torch.exp(z_log_sigma) - z_log_sigma - 1, [1, 2, 3])
+        mean_z_loss = torch.mean(z_loss)
 
-        return mean_w_loss
+        return mean_z_loss
 
 
 class CPriorLoss(_Loss):

@@ -21,10 +21,10 @@ from monai.networks.blocks import ADN
 from monai.networks.layers.factories import Act, Norm
 from monai.utils.misc import generate_tensor
 
-__all__ = ["DisCoPMVae"]
+__all__ = ["IntroCPMVAE"]
 
 
-class DisCoPMVae(nn.Module):
+class IntroCPMVAE(nn.Module):
     def __init__(
         self,
         dimensions: int,
@@ -88,8 +88,8 @@ class DisCoPMVae(nn.Module):
         self.zA_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_log_sigma_appearance')
         self.zA_log_sigma_conv.apply(self.weights_init)
 
-        self.zS_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_mean_shape', act='sigmoid')
-        self.zS_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_log_sigma_shape', act='sigmoid')
+        self.zS_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_mean_shape')
+        self.zS_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z * self.dim_c, 'p_zS/zS_log_sigma_shape')
         self.zS_log_sigma_conv.apply(self.weights_init)
 
         self.decode, _ = self._get_decode_module(self.dim_z + self.dim_z * self.dim_c, channels, strides, out_channels)
