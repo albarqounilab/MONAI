@@ -80,9 +80,9 @@ class PMVAE(nn.Module):
 
         self.encoded_channels = in_channels
         channels_appearance = [int(channel / 4) for channel in channels]
-        self.encode_shape, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides, name='_shape')
+        self.encode_shape, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
         self.encode_appearance, self.encoded_app_channels = \
-            self._get_encode_module(in_channels, channels_appearance,  strides, name='_appearance')
+            self._get_encode_module(in_channels, channels_appearance,  strides, name='appearance_')
 
         self.zA_mu_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_mean_appearance')
         self.zA_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'p_zA/zA_log_sigma_appearance')
@@ -104,17 +104,17 @@ class PMVAE(nn.Module):
                 torch.nn.init.zeros_(m.bias)
 
     @staticmethod
-    def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int], name='_shape'):
+    def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int], name='shape_'):
         decode_channel_list = list(channels[-1::-1])
         decode_strides = strides[::-1] or [1]
         layer_channels = in_channels
         encoder = nn.Sequential()
         for i, (c, s) in enumerate(zip(channels, strides)):
-            encoder.add_module("encode_down_" + name + "%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
+            encoder.add_module(name + "encode_down_" + name + "%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
                                                            strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
             layer_channels = c
         for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            encoder.add_module("encode_up_" + name + "%i" % i,
+            encoder.add_module(name + "encode_up_" + name + "%i" % i,
                                Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
                                            strides=s, kernel_size=5, norm='batch', act='leakyrelu', is_transposed=True))
             layer_channels = c
@@ -158,7 +158,8 @@ class PMVAE(nn.Module):
         #  q(zA|x)
         outputs['zA_mean'] = zA_mean = self.zA_mu_conv(zA_enc)
         outputs['zA_log_sigma'] = zA_log_sigma = self.zA_log_sigma_conv(zA_enc)
-        outputs['zA_sampled'] = zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * generate_tensor(zA_mean)
+        outputs['zA_sampled'] = zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * \
+                                             generate_tensor(zA_mean, mean=0, sigma=1)
 
         #  q(zS|x)
         outputs['zS_mean'] = zS_means = self.zS_mu_conv(zS_enc)
@@ -168,7 +169,8 @@ class PMVAE(nn.Module):
             outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * \
                                                  generate_tensor(zS_means, atlas_mean=atlas_mean, atlas_var=atlas_var)
         else:
-            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * generate_tensor(zS_means)
+            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * \
+                                                 generate_tensor(zS_means, mean=0, sigma=0.05)
         # outputs['zS_sampled'] = zS_sampled = z_wc_means + torch.exp(0.5 * z_wc_log_sigma) * generate_tensor(z_wc_means)
 
         # tissue map p(c)
