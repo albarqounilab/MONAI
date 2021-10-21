@@ -14,18 +14,18 @@ class EntropyLoss(_Loss):
     """
     Entropy loss = negative entropy.
     """
-    def forward(self, prob: torch.FloatTensor) -> torch.FloatTensor:
+    def forward(self, probs: torch.FloatTensor) -> torch.FloatTensor:
         """
         Computes the entropy loss.
 
-        :param prob: torch.FloatTensor
+        :param probs: torch.FloatTensor
             Tensor with class probabilities of shape (N, D).
         :return:
         """
-        if torch.any(prob < 0) or torch.any(prob > 1):
-            raise Exception('Entropy Loss takes probabilities 0 <= prob <= 1')
+        if torch.any(probs < 0) or torch.any(probs > 1):
+            raise Exception('Entropy loss takes probabilities 0 <= probs <= 1')
 
         # For numerical stability while taking log
-        prob = prob + 1e-16
-        entropy = torch.mean(torch.sum(prob * torch.log(prob), dim=1))
+        probs = probs + 1e-16
+        entropy = torch.mean(torch.sum(probs * torch.log(probs), dim=1))
         return entropy
