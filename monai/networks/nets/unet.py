@@ -185,9 +185,11 @@ class UNet(nn.Module):
 
         return conv
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         x = self.model(x)
-        return x
+        res = dict()
+        res['x_rec'] = x
+        return res
 
 
 Unet = unet = UNet
