@@ -38,7 +38,7 @@ class StatisticsAlignmentLoss(Module):
         """
         # Create multivariate normal distribution of features from client_name
         current_dist = MultivariateNormal(current_mean, current_cov)
-        alignment_loss = 0
+        alignment_loss = torch.tensor(0, device=self.device)
         for name in client_stats:
             # Only align to feature statistics of other clients
             if name != client_name:
