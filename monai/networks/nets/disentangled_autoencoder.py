@@ -9,8 +9,8 @@ class DisAutoEncoder(nn.Module):
     Bercea, C. I., Wiestler, B., Rueckert, D., & Albarqouni, S. (2021). FedDis: Disentangled Federated Learning for Unsupervised Brain Pathology Segmentation. arXiv e-prints, arXiv-2103.
     """
     def __init__(self, input_shape=(1, 128, 128), intermediate_res=(16, 16), kernel_size=5, use_batchnorm=True,
-                 is_dense=False, dense_size=128, filters_start_shape=64, filters_max_shape=128, filters_start_app=16,
-                 filters_max_app=32):
+                 filters_start_shape=64, filters_max_shape=128, filters_start_app=16, filters_max_app=32):
+
         super(DisAutoEncoder, self).__init__()
         #SHAPE
         self.shape_encoding_layers = nn.ModuleList()
@@ -20,9 +20,6 @@ class DisAutoEncoder(nn.Module):
         self.appearance_decoding_layers = nn.ModuleList()
 
         self.intermediate_res = intermediate_res
-        self.is_dense = is_dense
-        self.dense_size = dense_size
-        self.nr_linear_neurons = 1024
         self.filters_start_shape = filters_start_shape
         self.filters_max_shape = filters_max_shape
         self.filters_start_app = filters_start_app
@@ -49,21 +46,6 @@ class DisAutoEncoder(nn.Module):
             self.appearance_encoding_layers.append(nn.LeakyReLU())
             filters_in = filters_out
             filters_in_ = filters_out_
-
-        # BOTTLENECK
-        if is_dense:
-            filters_bottleneck = filters_out // 8
-            self.shape_encoding_layers.append(nn.Conv2d(filters_out, filters_bottleneck, 1, stride=1))
-            self.appearance_encoding_layers.append(nn.Conv2d(filters_out, filters_bottleneck, 1, stride=1))
-
-            self.shape_encoding_layers.append(nn.Conv2d(filters_bottleneck, filters_out, 1, stride=1))
-            self.appearance_decoding_layers.append(nn.Conv2d(filters_bottleneck, filters_out, 1, stride=1))
-
-            self.shape_to_z = nn.Linear(self.nr_linear_neurons, dense_size)
-            self.shape_from_z = nn.Linear(dense_size, self.nr_linear_neurons)
-
-            self.appearance_to_z = nn.Linear(self.nr_linear_neurons, dense_size)
-            self.appearance_from_z = nn.Linear(dense_size, self.nr_linear_neurons)
 
 
         # DECODER
@@ -122,23 +104,12 @@ class DisAutoEncoder(nn.Module):
         z_a = self.encode(x, path='appearance')
         x_s = self.shape_drop(z_s)
         x_a = self.appearance_drop(z_a)
-        # Dense Bottleneck?
-        if self.is_dense:
-            x_s = x_s.view(-1,  self.nr_linear_neurons)
-            z_s = self.to_z(x_s)
-            x_s = self.from_z(z_s)
-            x_s = x_s.view(-1,  16, self.intermediate_res[0], self.intermediate_res[1])
-            x_a = x_a.view(-1, self.nr_linear_neurons)
-            z_a = self.to_z(x_a)
-            x_a = self.from_z(z_a)
-            x_a = x_a.view(-1, 16, self.intermediate_res[0], self.intermediate_res[1])
-        # Decode
 
+        # Decode
         x_s = self.decode(x_s, path='shape')
         x_a = self.decode(x_a, path='appearance')
         # Merge
         # x_s_zeros = torch.zeros_like(x_s, device=x_s.device)
-        # x_a_zeros = torch.zeros_like(x_a, device=x_a.device)
-
+        x_a_zeros = torch.zeros_like(x_a, device=x_a.device)
         x_ = torch.sigmoid(self.merger(torch.cat((x_s,  x_a), 1)))
-        return {'x_rec': x_, 'z_s':  z_s, 'z_a':  z_a}
+        return x_, {'z_s':  z_s, 'z_a':  z_a}

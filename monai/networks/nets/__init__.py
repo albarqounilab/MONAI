@@ -9,10 +9,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .ada_in import AdaIN
 from .ahnet import AHnet, Ahnet, AHNet, ahnet
 from .autoencoder import AutoEncoder
+from .avatarNet import AvatarNet
 from .basic_unet import BasicUNet, BasicUnet, Basicunet, basicunet
 from .classifier import Classifier, Critic, Discriminator
+from .chamaeleoNet import ChamaeleoNet
 from .densenet import (
     DenseNet,
     Densenet,
@@ -75,9 +78,11 @@ from .senet import (
     seresnext50,
     seresnext101,
 )
+from .style_decorator import StyleDecorator
 from .torchvision_fc import TorchVisionFCModel, TorchVisionFullyConvModel
 from .unet import UNet, Unet, unet
 from .unetr import UNETR
 from .varautoencoder import VarAutoEncoder
 from .vit import ViT
+from .vgg import Encoder
 from .vnet import VNet

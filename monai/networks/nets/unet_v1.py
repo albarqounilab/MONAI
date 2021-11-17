@@ -67,8 +67,7 @@ class UNetV1(nn.Module):
         dec1 = self.upconv1(dec2)
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
-        out_ = dict()
-        out_['x_rec'] = torch.sigmoid(self.conv(dec1))
+        out_ = torch.sigmoid(self.conv(dec1))
         return out_
 
     @staticmethod

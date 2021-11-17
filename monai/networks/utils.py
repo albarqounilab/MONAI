@@ -19,6 +19,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 
 __all__ = [
     "one_hot",
@@ -32,6 +34,10 @@ __all__ = [
     "eval_mode",
     "train_mode",
     "copy_model_state",
+    "covsqrt_mean",
+    "whitening",
+    "coloring",
+    "extract_patches"
 ]
 
 
@@ -413,3 +419,69 @@ def copy_model_state(
     if inplace and isinstance(dst, torch.nn.Module):
         dst.load_state_dict(dst_dict)
     return dst_dict, updated_keys, unchanged_keys
+
+
+def covsqrt_mean(feature, inverse=False, tolerance=1e-14):
+    # I referenced the default svd tolerance value in matlab.
+
+    b, c, h, w = feature.size()
+
+    mean = torch.mean(feature.view(b, c, -1), dim=2, keepdim=True)
+    zeromean = feature.view(b, c, -1) - mean
+    cov = torch.bmm(zeromean, zeromean.transpose(1, 2))
+
+    evals, evects = torch.symeig(cov, eigenvectors=True)
+
+    p = 0.5
+    if inverse:
+        p *= -1
+
+    covsqrt = []
+    for i in range(b):
+        k = 0
+        for j in range(c):
+            if evals[i][j] > tolerance:
+                k = j
+                break
+        covsqrt.append(torch.mm(evects[i][:, k:],
+                                torch.mm(evals[i][k:].pow(p).diag_embed(),
+                                         evects[i][:, k:].t())).unsqueeze(0))
+    covsqrt = torch.cat(covsqrt, dim=0)
+
+    return covsqrt, mean
+
+
+def whitening(feature):
+    b, c, h, w = feature.size()
+
+    inv_covsqrt, mean = covsqrt_mean(feature, inverse=True)
+
+    normalized_feature = torch.matmul(inv_covsqrt, feature.view(b, c, -1) - mean)
+
+    return normalized_feature.view(b, c, h, w)
+
+
+def coloring(feature, target):
+    b, c, h, w = feature.size()
+
+    covsqrt, mean = covsqrt_mean(target)
+
+    colored_feature = torch.matmul(covsqrt, feature.view(b, c, -1)) + mean
+
+    return colored_feature.view(b, c, h, w)
+
+def extract_patches(feature, patch_size, stride):
+    ph, pw = patch_size
+    sh, sw = stride
+
+    # padding the feature
+    padh = (ph - 1) // 2
+    padw = (pw - 1) // 2
+    padding_size = (padw, padw, padh, padh)
+    feature = F.pad(feature, padding_size, 'constant', 0)
+
+    # extract patches
+    patches = feature.unfold(2, ph, sh).unfold(3, pw, sw)
+    patches = patches.contiguous().view(*patches.size()[:-2], -1)
+
+    return patches

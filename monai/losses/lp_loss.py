@@ -1,5 +1,6 @@
 from torch.nn.modules.loss import _Loss
 import torch
+import torch.nn.functional as F
 
 
 class L1Loss(_Loss):
@@ -34,3 +35,34 @@ class L1Loss(_Loss):
         """
         return self.l1(input, target)
 
+
+class L2Loss(_Loss):
+    """
+    Wrapper for pytorch L2Loss
+    see torch.nn.L2Loss(reduction='mean')
+
+    """
+
+    def __init__(
+        self,
+        reduction: str = 'mean') -> None:
+        """
+        Args
+            reduction: str, {'none', 'mean', 'sum}
+                Specifies the reduction to apply to the output. Defaults to ``"mean"``.
+                - 'none': no reduction will be applied.
+                - 'mean': the sum of the output will be divided by the number of elements in the output.
+                - 'sum': the output will be summed.
+        """
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor):
+        """
+        Args:
+            input: (N,*),
+                where N is the batch size and * is any number of additional dimensions.
+            target (N,*),
+                same shape as input.
+        """
+        return F.mse_loss(input, target, reduction=self.reduction)

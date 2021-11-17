@@ -21,4 +21,8 @@ from .utils import (
     slice_channels,
     to_norm_affine,
     train_mode,
+    covsqrt_mean,
+    whitening,
+    coloring,
+    extract_patches
 )

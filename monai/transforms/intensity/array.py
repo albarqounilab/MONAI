@@ -192,7 +192,7 @@ class RandRectangleMasking(RandomizableTransform):
     """
 
     def __init__(self, start_x_range: Tuple[int,  int], start_y_range: Tuple[int, int],
-                 width_range: Tuple[int, int], max_rectangles: int, cval: int = -1) -> None:
+                 width_range: Tuple[int, int], max_rectangles: int, cval: int = -1, perc=75) -> None:
         RandomizableTransform.__init__(self, prob=1.0)
         self.start_x_range = start_x_range
         self.start_y_range = start_y_range
@@ -203,12 +203,15 @@ class RandRectangleMasking(RandomizableTransform):
         self.width = 0
         self.height = 0
         self.mask_intensity = cval
+        self.perc = perc
 
     def randomize(self, img: Union[torch.Tensor, np.ndarray]) -> None:
         super().randomize(None)
         if self.mask_intensity == -1:
-            perc99 = np.int(min(np.percentile(img[img > img.min() + 0.15], 99) + 0.1, 1) * 100)
-            self.mask_intensity = np.random.randint(perc99, 100) / 100 if (perc99 < 100) else 1.0
+            vals = img[img > 0.15].flatten()
+            perc_ = np.int(min((np.round(np.percentile(vals, self.perc), 3)), 1) * 100)
+            # perc_ = np.int(min(np.percentile(img[img > img.min() + 0.15], self.perc) + 0.1, 1) * 100)
+            self.mask_intensity = np.random.randint(perc_, 100) / 100 if (perc_ < 100) else 1.0
         self.start_index_x = np.random.randint(self.start_x_range[0], self.start_x_range[1])
         self.start_index_y = np.random.randint(self.start_y_range[0], self.start_y_range[1])
         self.width = np.random.randint(self.width_range[0], self.width_range[1])
@@ -735,17 +738,20 @@ class RandAdjustContrast(RandomizableTransform):
         super().randomize(None)
         self.gamma_value = self.R.uniform(low=self.gamma[0], high=self.gamma[1])
 
-    def __call__(self, img: np.ndarray):
+    def __call__(self, img):
         """
         Apply the transform to `img`.
         """
         self.randomize()
+        if type(img) is not list:
+            img = [img]
         if self.gamma_value is None:
             raise AssertionError
         if not self._do_transform:
             return img
         adjuster = AdjustContrast(self.gamma_value)
-        return adjuster(img)
+        adjusted_img = [adjuster(im) for im in img]
+        return adjusted_img
 
 
 class ScaleIntensityRangePercentiles(Transform):

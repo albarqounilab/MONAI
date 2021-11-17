@@ -2,8 +2,6 @@
 import torch.nn as nn
 import numpy as np
 import torch
-from monai.networks.blocks import Convolution
-from monai.networks.layers.factories import Act, Norm
 
 
 class ConvAutoEncoder(nn.Module):
@@ -11,8 +9,8 @@ class ConvAutoEncoder(nn.Module):
     Simple auto-encoder implementation as in:
     Christoph Baur, Benedikt Wiestler, Shadi Albarqouni, and Nassir Navab. Deep Autoencoding Models for Unsupervised Anomaly Segmentation in Brain MR Images. arXiv preprint arXiv:1804.04488, 2018.
     """
-    def __init__(self, input_shape=(1, 128, 128), intermediate_res=(16, 16), kernel_size=5,
-                 use_batchnorm=False, is_dense=False, dense_size=128, filters_start=64, filters_max=128):
+    def __init__(self, input_shape=(1, 128, 128), intermediate_res=(16, 16), kernel_size=5, use_batchnorm=False,
+                 filters_start=64, filters_max=128):
         """
         :param input_shape: tuple
             size of each dimension
@@ -22,10 +20,6 @@ class ConvAutoEncoder(nn.Module):
             kernel size of the convolution
         :param use_batchnorm: bool
             use batch normalization if True, else use group normalization
-        :param is_dense: bool
-            use dense bottleneck if True, else spatial
-        :param dense_size: int
-            dense bottleneck size
         :param filters_start: int
             amount of filter channels at first layer
         :param filters_max:
@@ -35,9 +29,6 @@ class ConvAutoEncoder(nn.Module):
         self.encoding_layers = nn.ModuleList()
         self.decoding_layers = nn.ModuleList()
         self.intermediate_res = intermediate_res
-        self.is_dense = is_dense
-        self.dense_size = dense_size
-        self.nr_linear_neurons = 1024
         self.filters_start = filters_start
         self.filters_max = filters_max
 
@@ -52,14 +43,6 @@ class ConvAutoEncoder(nn.Module):
             self.encoding_layers.append(nn.LeakyReLU())
             filters_in = filters_out
 
-        # BOTTLENECK
-        if is_dense:
-            filters_bottleneck = filters_out // 8
-            self.encoding_layers.append(nn.Conv2d(filters_out, filters_bottleneck , 1, stride=1))
-            self.decoding_layers.append(nn.Conv2d(filters_bottleneck, filters_out, 1, stride=1))
-
-            self.to_z = nn.Linear(self.nr_linear_neurons, dense_size)
-            self.from_z = nn.Linear(dense_size, self.nr_linear_neurons)
         # DECODER
         filters_in = self.filters_max
         self.decoding_layers.append(nn.BatchNorm2d(filters_in) if  use_batchnorm else
@@ -93,14 +76,9 @@ class ConvAutoEncoder(nn.Module):
         # Encode
         z = self.encode(x)
         x_ = self.drop(z)
-        # Dense Bottleneck?
-        if self.is_dense:
-            x_ = x_.view(-1,  self.nr_linear_neurons)
-            z = self.to_z(x_)
-            x_ = self.from_z(z)
-            x_ = x_.view(-1,  16, self.intermediate_res[0], self.intermediate_res[1])
+
         # Decode
         x_ = self.decode(x_)
         # Merge
         x_ = torch.sigmoid(self.merger(x_))
-        return {'x_rec': x_, 'z':  z}
+        return x_, {'z':  z}

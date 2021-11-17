@@ -44,7 +44,7 @@ class PMVAE(nn.Module):
         dim_c: int = 5,  # nr clusters
         dim_z: int = 128,
         dim_w:  int = 1,
-        c_lambda: int = 0.5,
+        atlas_var_sigma: float = 1e-3,
         restore_lr: float = 1e-3,
         restore_steps: int = 150,
         tv_lambda: float = 1.8
@@ -68,10 +68,10 @@ class PMVAE(nn.Module):
         self.dim_c = dim_c
         self.dim_z = dim_z
         self.dim_w = dim_w
-        self.c_lambda = c_lambda
         self.restore_lr = restore_lr
         self.restore_steps = restore_steps
         self.tv_lambda = tv_lambda
+        self.atlas_var_sigma = atlas_var_sigma
         self.act = 'relu'
 
         # The number of channels and strides should match
@@ -158,20 +158,23 @@ class PMVAE(nn.Module):
         #  q(zA|x)
         outputs['zA_mean'] = zA_mean = self.zA_mu_conv(zA_enc)
         outputs['zA_log_sigma'] = zA_log_sigma = self.zA_log_sigma_conv(zA_enc)
-        outputs['zA_sampled'] = zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * \
-                                             generate_tensor(zA_mean, mean=0, sigma=1)
+        zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * generate_tensor(zA_mean, mean=0, sigma=self.atlas_var_sigma)
+        # zA_sampled -= zA_sampled.min(1, keepdim=True)[0]
+        # zA_sampled /= zA_sampled.max(1, keepdim=True)[0]
+        outputs['zA_sampled'] = zA_sampled
 
         #  q(zS|x)
-        outputs['zS_mean'] = zS_means = self.zS_mu_conv(zS_enc)
-        outputs['zS_log_sigma'] = zS_log_sigmas = self.zS_log_sigma_conv(zS_enc)
+        zS_means = self.zS_mu_conv(zS_enc)
+        # zS_means = (zS_means - zS_means.min(1, keepdim=True)[0]) / zS_means.max(1, keepdim=True)[0]
+        outputs['zS_mean'] = self.softMax(zS_means)
+
+        zS_log_sigmas = self.zS_log_sigma_conv(zS_enc)
+        # zS_log_sigmas = (zS_log_sigmas - zS_log_sigmas.min(1, keepdim=True)[0]) / zS_log_sigmas.max(1, keepdim=True)[0]
+        outputs['zS_log_sigma'] = self.softMax(zS_log_sigmas)
+
         #zS_log_sigma + generate_tensor(zS_log_sigma, 0.1)  # Add 0.1 bias
-        if atlas_mean is not None:
-            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * \
-                                                 generate_tensor(zS_means, atlas_mean=atlas_mean, atlas_var=atlas_var)
-        else:
-            outputs['zS_sampled'] = zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * \
-                                                 generate_tensor(zS_means, mean=0, sigma=0.05)
-        # outputs['zS_sampled'] = zS_sampled = z_wc_means + torch.exp(0.5 * z_wc_log_sigma) * generate_tensor(z_wc_means)
+        zS_sampled = zS_means + torch.exp(0.5 * zS_log_sigmas) * generate_tensor(zS_means, mean=0, sigma=self.atlas_var_sigma)
+        outputs['zS_sampled'] = zS_sampled
 
         # tissue map p(c)
         outputs['pc'] = self.softMax(zS_sampled)

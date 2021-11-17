@@ -24,13 +24,15 @@ from .dice import (
     generalized_dice,
     generalized_wasserstein_dice,
 )
-from .l1_loss import L1Loss
+from .lp_loss import L1Loss
 from .cosine_embedding_loss import CosineEmbeddingLoss
 from .focal_loss import FocalLoss
-from .gmvae_loss import ReconLoss, AtlasPriorLoss, BrainPriorLoss, ConditionalPriorLoss, NormalPriorLoss, CPriorLoss
+from .vae_loss import ReconLoss, AtlasPriorLoss, BrainPriorLoss, ConditionalPriorLoss, NormalPriorLoss, CPriorLoss
 from .image_dissimilarity import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss
 from .multi_scale import MultiScaleLoss
 from .spatial_mask import MaskedLoss
 from .tversky import TverskyLoss
 from .entropy_loss import EntropyLoss
 from .alignment_loss import StatisticsAlignmentLoss
+from .total_variation_loss import TotalVariationLoss
+from .vgg_losses import PerceptualLoss,  ContentLoss, StyleLoss
