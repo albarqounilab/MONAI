@@ -24,7 +24,6 @@ from .dice import (
     generalized_dice,
     generalized_wasserstein_dice,
 )
-from .lp_loss import L1Loss
 from .cosine_embedding_loss import CosineEmbeddingLoss
 from .focal_loss import FocalLoss
 from .vae_loss import ReconLoss, AtlasPriorLoss, BrainPriorLoss, ConditionalPriorLoss, NormalPriorLoss, CPriorLoss
@@ -36,3 +35,4 @@ from .entropy_loss import EntropyLoss
 from .alignment_loss import StatisticsAlignmentLoss
 from .total_variation_loss import TotalVariationLoss
 from .vgg_losses import PerceptualLoss,  ContentLoss, StyleLoss
+from torch.nn import L1Loss, MSELoss
