@@ -1,511 +1,267 @@
-# Copyright 2020 - 2021 MONAI Consortium
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from typing import Any, Optional, Sequence, Tuple, Union
-
 import torch
 import torch.nn as nn
 import numpy as np
-import math
-
-from monai.networks.blocks import Convolution, ResidualUnit, Upsample
-from monai.networks.blocks import ADN
-from monai.networks.layers.factories import Act, Norm
+from typing import Sequence
+from monai.networks.blocks import Convolution
+from monai.networks.layers.convutils import weights_init
 from monai.utils.misc import generate_tensor
+from monai.networks.nets.convolutional_autoencoders import *
 
-__all__ = ["GaussianMixtureVariationalAutoEncoder", "GaussianMixtureVariationalAutoEncoder2",
-           "DisentangledGaussianMixtureVariationalAutoEncoder"]
+__all__ = ["GaussianMixtureVariationalAutoEncoder", "GaussianMixtureVariationalAutoEncoderBig"]
 
 
 class GaussianMixtureVariationalAutoEncoder(nn.Module):
-    def __init__(
-        self,
-        dimensions: int,
-        in_channels: int,
-        out_channels: int,
-        channels: Sequence[int],
-        strides: Sequence[int],
-        kernel_size: Union[Sequence[int], int] = 3,
-        up_kernel_size: Union[Sequence[int], int] = 3,
-        num_res_units: int = 0,
-        inter_channels: Optional[list] = None,
-        inter_dilations: Optional[list] = None,
-        num_inter_units: int = 2,
-        act: Optional[Union[Tuple, str]] = Act.PRELU,
-        norm: Union[Tuple, str] = Norm.INSTANCE,
-        dropout: Optional[Union[Tuple, str, float]] = None,
-        dim_c: int = 6,  # nr clusters
-        dim_z: int = 128,
-        dim_w:  int = 1,
-        c_lambda: int = 0.5,
-        restore_lr: float = 1e-3,
-        restore_steps: int = 150,
-        tv_lambda: float = 1.8
-    ) -> None:
 
-        super().__init__()
-        self.dimensions = dimensions
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.channels = list(channels)
-        self.strides = list(strides)
-        self.kernel_size = kernel_size
-        self.up_kernel_size = up_kernel_size
-        self.num_res_units = num_res_units
-        self.act = act
-        self.norm = norm
-        self.dropout = dropout
-        self.num_inter_units = num_inter_units
-        self.inter_channels = inter_channels if inter_channels is not None else []
-        self.inter_dilations = list(inter_dilations or [1] * len(self.inter_channels))
+    def __init__(self, dimensions: int, in_channels: int, dim_z: int, dim_w: int, dim_c: int, channels: Sequence[int],
+                 out_ch: int, strides: Sequence[int], kernel_size=5, norm='batch', act='leakyrelu', bottleneck=False,
+                 skip=False,norm_mean=0, norm_std=1):
+        """
+        Variational Auto-Encoder
+        :param dimensions:
+        :param in_channels:
+        :param dim_z:
+        :param dim_w:
+        :param dim_c
+        :param channels:
+        :param strides:
+        :param kernel_size:
+        :param norm:
+        :param act:
+        :param bottleneck:
+        :param skip:
+        :param norm_mean:
+        :param norm_std:
+        """
+        super(GaussianMixtureVariationalAutoEncoder, self).__init__()
+
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
         self.dim_c = dim_c
-        self.dim_z = dim_z
-        self.dim_w = dim_w
-        self.c_lambda = c_lambda
-        self.restore_lr = restore_lr
-        self.restore_steps = restore_steps
-        self.tv_lambda = tv_lambda
-        self.act = 'relu'
 
-        # The number of channels and strides should match
-        if len(channels) != len(strides):
-            raise ValueError("Autoencoder expects matching number of channels and strides")
+        self.encode = Encoder(dimensions=dimensions, in_channels=in_channels, channels=channels, strides=strides,
+                              kernel_size=kernel_size, norm=norm, act=act, name_prefix='ENC_')
 
-        self.encoded_channels = in_channels
-        decode_channel_list = list(channels[-2::-1]) + [channels[0]] + [out_channels]
+        self.decode = Decoder(dimensions=dimensions, in_channels=in_channels, channels=channels, out_ch=out_ch,
+                              strides=strides, kernel_size=kernel_size, norm=norm, act=act, act_final='sigmoid',
+                              bottleneck=bottleneck, skip=skip, add_final=True, name_prefix='DEC_')
 
-        self.encode, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
+        z_channels = channels[-1]
+        # Z
+        self.z_mu_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_z, strides=1,
+                                     kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu', name='')
+        self.z_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_z,
+                                            strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch',
+                                            act='relu', name='')
+        self.z_log_sigma_conv.apply(weights_init)
 
-        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z,
-                                                                           'q_wz_x/z_mean')
-        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
-        self.z_log_sigma_conv.apply(self.weights_init)
+        # W
+        self.w_mu_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_w, strides=1,
+                                     kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu', name='')
+        self.w_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_w,
+                                            strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch',
+                                            act='relu', name='')
+        self.w_log_sigma_conv.apply(weights_init)
 
-        self.w_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_mean')
-        self.w_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_log_sigma')
-        self.w_log_sigma_conv.apply(self.weights_init)
-        self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, 64, 'p_z_wc/1x1convlayer', conv_only=False)
-        self.z_wc_mu_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
-        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma', bias=False)
-        self.z_wc_log_sigma_conv.apply(self.weights_init)
+        # Z_WC
+        self.z_wc_conv = Convolution(dimensions=dimensions, in_channels=dim_w, out_channels=channels[0], strides=1,
+                                     kernel_size=1, conv_only=False, bias=True, norm='batch', act='relu', name='')
+        self.z_wc_mu_conv = Convolution(dimensions=dimensions, in_channels=channels[0], out_channels=dim_z * dim_w,
+                                        strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu')
+        self.z_wc_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=channels[0],
+                                               out_channels=dim_z * dim_w, strides=1, kernel_size=1, conv_only=True,
+                                               bias=True, norm='batch', act='relu')
+        self.z_wc_log_sigma_conv.apply(weights_init)
 
-        self.decode, _ = self._get_decode_module(self.latent_channels, decode_channel_list, strides[::-1] or [1])
-        self.softMax = torch.nn.Softmax()
+    def _latent_distribution(self, z_enc: torch):
+        #  q(z|x)
+        z_mean = self.z_mu_conv(z_enc)
+        z_log_sigma = self.z_log_sigma_conv(z_enc)
+        z = z_mean + torch.exp(0.5 * z_log_sigma) * generate_tensor(z_mean)
 
-    @staticmethod
-    def weights_init(m):
-        if hasattr(m, 'weight'):
-            torch.nn.init.zeros_(m.weight)
-            if m.bias is not None:
-                torch.nn.init.zeros_(m.bias)
+        # q(w|x)
+        w_mean = self.w_mu_conv(z_enc)
+        w_log_sigma = self.w_log_sigma_conv(z_enc)
+        w = w_mean + torch.exp(0.5 * w_log_sigma) * generate_tensor(w_mean)
 
-    @staticmethod
-    def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int]):
-        layer_channels = in_channels
-        encoder = nn.Sequential()
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            encoder.add_module("encode_%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
-            layer_channels = c
-        return encoder, layer_channels
+        # posterior p(z|w,c)
+        w_enc = self.z_wc_conv(w)
+        z_wc_mean = self.z_wc_mu_conv(w_enc)
+        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_enc)
+        z_wc = z_wc_mean + torch.exp(z_wc_log_sigma) * generate_tensor(z_wc_mean)
 
-    @staticmethod
-    def _get_decode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int]):
-        decoder = nn.Sequential()
-        layer_channels = in_channels
-        decoder.add_module('decode_init', ADN(in_channels=in_channels, act='leakyrelu', norm='batch', norm_dim=2))
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            decoder.add_module("decode_%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu',
-                                                           is_transposed=True))
-            layer_channels = c
+        # prior p(c) network
+        z_sample = torch.tile(z, [1, self.dim_c, 1, 1])
+        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_mean), 2) * torch.exp(z_wc_log_sigma) \
+                   - z_wc_log_sigma + torch.log(torch.tensor(np.pi))
+        pc = self.softMax(pc_logit)
 
-        out_ch = channels[-1]
-        decoder.add_module("decode_final", Convolution(dimensions=2, in_channels=layer_channels, out_channels=out_ch,
-                                                       strides=1, kernel_size=1, conv_only=True, act='identity'))
-        return decoder, layer_channels
+        return {'z': z, 'w': w, 'z_wc': z_wc, 'pc': pc}
 
-    def _get_convolution_layer(self, dim_in, dim_out, name='', kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu'):
-        conv_layer = nn.Sequential()
-        conv_layer.add_module(name,
-                              Convolution(dimensions=self.dimensions, in_channels=dim_in, out_channels=dim_out,
-                                          kernel_size=kernel_size, conv_only=conv_only, bias=bias, norm=norm, act=act))
-        return conv_layer, dim_out
+    def _skip_forward(self, x: torch):
+        # encoding network
+        down_samples = []
+        z_enc = x
+        for layer in self.encode:
+            z_enc = layer(z_enc)
+            if hasattr(layer, 'conv'):
+                down_samples.append(z_enc)
 
-    def forward(self, x: torch.Tensor, scanner: torch.Tensor) -> Any:
-        outputs = dict()
+        # latent
+        return_dict = self._latent_distribution(z_enc)
+        x_ = return_dict['z']
 
-        #  Encoding network
+        # decoding network
+        for i, layer in enumerate(self.decode):
+            if hasattr(layer, 'conv'):
+                if layer.conv.stride[0] == 2:
+                    x_ = torch.cat((x_, down_samples[-i - 1]), 1)
+            x_ = layer(x_)
+
+        return x_, return_dict
+
+    def forward(self,  x: torch):
+        # encode
         z_enc = self.encode(x)
 
-        #  q(z|x)
-        outputs['z_mean'] = z_mean = self.z_mu_conv(z_enc)
-        outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(z_enc)
-        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * generate_tensor(z_mean)
+        #  latent
+        return_dict = self._latent_distribution(z_enc)
+        z = return_dict['z']
 
-        # q(w|x)
-        outputs['w_mean'] = w_mean = self.w_mu_conv(z_enc)
-        outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(z_enc)
-        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * generate_tensor(w_mean)
-
-        # posterior p(z|w,c)
-        w_sampled = self.z_wc_conv(w_sampled)
-        outputs['z_wc_mean'] = z_wc_means = self.z_wc_mu_conv(w_sampled)
-        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
-        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = z_wc_log_sigma + generate_tensor(z_wc_log_sigma, 0.1)  # Add 0.1 bias
-        outputs['z_wc_sampled'] = z_wc_log_sigmas = \
-            z_wc_means + torch.exp(z_wc_log_sigmas) * generate_tensor(z_wc_means)
-
-        # decoding network p(x|z) parameter
-        outputs['x_mean'] = self.decode(z_sampled)
-
-        # prior p(c) network
-        z_sample = torch.tile(z_sampled, [1, self.dim_c, 1, 1])
-        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_means), 2) * torch.exp(z_wc_log_sigmas)\
-                   - z_wc_log_sigmas + torch.log(torch.tensor(np.pi))
-        outputs['pc'] = self.softMax(pc_logit)
-
-        return outputs
+        # decode
+        x_ = self.decode(z)
+        return x_, return_dict
 
 
-class GaussianMixtureVariationalAutoEncoder2(nn.Module):
-    def __init__(
-        self,
-        dimensions: int,
-        in_channels: int,
-        out_channels: int,
-        channels: Sequence[int],
-        strides: Sequence[int],
-        kernel_size: Union[Sequence[int], int] = 3,
-        up_kernel_size: Union[Sequence[int], int] = 3,
-        num_res_units: int = 0,
-        inter_channels: Optional[list] = None,
-        inter_dilations: Optional[list] = None,
-        num_inter_units: int = 2,
-        act: Optional[Union[Tuple, str]] = Act.PRELU,
-        norm: Union[Tuple, str] = Norm.INSTANCE,
-        dropout: Optional[Union[Tuple, str, float]] = None,
-        dim_c: int = 6,  # nr clusters
-        dim_z: int = 128,
-        dim_w:  int = 1,
-        c_lambda: int = 0.5,
-        restore_lr: float = 1e-3,
-        restore_steps: int = 150,
-        tv_lambda: float = 1.8
-    ) -> None:
+class GaussianMixtureVariationalAutoEncoderBig(nn.Module):
 
-        super().__init__()
-        self.dimensions = dimensions
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.channels = list(channels)
-        self.strides = list(strides)
-        self.kernel_size = kernel_size
-        self.up_kernel_size = up_kernel_size
-        self.num_res_units = num_res_units
-        self.act = act
-        self.norm = norm
-        self.dropout = dropout
-        self.num_inter_units = num_inter_units
-        self.inter_channels = inter_channels if inter_channels is not None else []
-        self.inter_dilations = list(inter_dilations or [1] * len(self.inter_channels))
+    def __init__(self, dimensions: int, in_channels: int, dim_z: int, dim_w: int, dim_c: int, channels: Sequence[int],
+                 out_ch: int, strides: Sequence[int], kernel_size=5, norm='batch', act='leakyrelu', bottleneck=False,
+                 skip=False, norm_mean=0, norm_std=1):
+        """
+        :param dimensions:
+        :param in_channels:
+        :param dim_z:
+        :param dim_w:
+        :param channels:
+        :param strides:
+        :param kernel_size:
+        :param norm:
+        :param act:
+        :param bottleneck:
+        :param skip:
+        :param norm_mean:
+        :param norm_std:
+        """
+        super(GaussianMixtureVariationalAutoEncoderBig, self).__init__()
+
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
         self.dim_c = dim_c
-        self.dim_z = dim_z
-        self.dim_w = dim_w
-        self.c_lambda = c_lambda
-        self.restore_lr = restore_lr
-        self.restore_steps = restore_steps
-        self.tv_lambda = tv_lambda
-        self.act = 'relu'
+        self.skip = skip
 
-        # The number of channels and strides should match
-        if len(channels) != len(strides):
-            raise ValueError("Autoencoder expects matching number of channels and strides")
+        self.encode_down = Encoder(dimensions=dimensions, in_channels=in_channels, channels=channels, strides=strides,
+                                   kernel_size=kernel_size, norm=norm, act=act, name_prefix='ENC_')
 
-        self.encoded_channels = in_channels
-        self.encode, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
+        self.encode_up = Decoder(dimensions=dimensions, in_channels=channels[-1], channels=channels, out_ch=channels[0],
+                                 strides=strides, kernel_size=kernel_size, norm=norm, act=act, act_final='identity',
+                                 bottleneck=bottleneck, skip=skip, add_final=False, name_prefix='ENC_')
 
-        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z,
-                                                                           'q_wz_x/z_mean')
-        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
-        self.z_log_sigma_conv.apply(self.weights_init)
+        self.decode_down = Encoder(dimensions=dimensions, in_channels=in_channels, channels=channels, strides=strides,
+                                   kernel_size=kernel_size, norm=norm, act=act, name_prefix='DEC_')
 
-        self.w_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_mean')
-        self.w_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_log_sigma')
-        self.w_log_sigma_conv.apply(self.weights_init)
-        self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, 64, 'p_z_wc/1x1convlayer', conv_only=False)
-        self.z_wc_mu_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
-        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma', bias=False)
-        self.z_wc_log_sigma_conv.apply(self.weights_init)
+        self.decode_up = Decoder(dimensions=dimensions, in_channels=channels[-1], channels=channels, out_ch=out_ch,
+                                 strides=strides, kernel_size=kernel_size, norm=norm, act=act, act_final='sigmoid',
+                                 bottleneck=bottleneck, skip=skip, add_final=True, name_prefix='DEC_')
 
-        self.decode, _ = self._get_decode_module(self.latent_channels, channels, strides, out_channels)
-        self.softMax = torch.nn.Softmax()
+        z_channels = channels[0]
+        # Z
+        self.z_mu_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_z, strides=1,
+                                     kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu', name='')
+        self.z_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_z,
+                                            strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch',
+                                            act='relu', name='')
+        self.z_log_sigma_conv.apply(weights_init)
 
-    @staticmethod
-    def weights_init(m):
-        if hasattr(m, 'weight'):
-            torch.nn.init.zeros_(m.weight)
-            if m.bias is not None:
-                torch.nn.init.zeros_(m.bias)
+        # W
+        self.w_mu_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_w, strides=1,
+                                     kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu', name='')
+        self.w_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=z_channels, out_channels=dim_w,
+                                            strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch',
+                                            act='relu', name='')
+        self.w_log_sigma_conv.apply(weights_init)
 
-    @staticmethod
-    def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int]):
-        decode_channel_list = list(channels[-1::-1]) + [channels[0]]
-        decode_strides = strides[::-1] or [1]
-        layer_channels = in_channels
-        encoder = nn.Sequential()
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            encoder.add_module("encode_down_%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
-            layer_channels = c
-        for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            encoder.add_module("encode_up_%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu',is_transposed=True))
-            layer_channels = c
-        return encoder, layer_channels
+        # Z_WC
+        self.z_wc_conv = Convolution(dimensions=dimensions, in_channels=dim_w, out_channels=channels[0], strides=1,
+                                     kernel_size=1, conv_only=False, bias=True, norm='batch', act='relu', name='')
+        self.z_wc_mu_conv = Convolution(dimensions=dimensions, in_channels=channels[0], out_channels=dim_z*dim_w,
+                                        strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu')
+        self.z_wc_log_sigma_conv = Convolution(dimensions=dimensions, in_channels=channels[0], out_channels=dim_z*dim_w,
+                                               strides=1, kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu')
+        self.z_wc_log_sigma_conv.apply(weights_init)
 
-    @staticmethod
-    def _get_decode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int], out_ch):
-        decode_channel_list = list(channels[-2::-1]) + [channels[0]]
-        decode_strides = strides[::-1] or [1]
-        layer_channels = in_channels
-        decoder = nn.Sequential()
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            decoder.add_module("decode_down_%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
-            layer_channels = c
-        for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            decoder.add_module("decode_up_%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu', is_transposed=True))
-            layer_channels = c
-
-        decoder.add_module("decode_final", Convolution(dimensions=2, in_channels=layer_channels, out_channels=out_ch,
-                                                       strides=1, kernel_size=1, conv_only=True, act='identity'))
-        return decoder, layer_channels
-
-    def _get_convolution_layer(self, dim_in, dim_out, name='', kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu'):
-        conv_layer = nn.Sequential()
-        conv_layer.add_module(name,
-                              Convolution(dimensions=self.dimensions, in_channels=dim_in, out_channels=dim_out,
-                                          kernel_size=kernel_size, conv_only=conv_only, bias=bias, norm=norm, act=act))
-        return conv_layer, dim_out
-
-    def forward(self, x: torch.Tensor, scanner: torch.Tensor) -> Any:
-        outputs = dict()
-
-        #  Encoding network
-        z_enc = self.encode(x)
-
+    def _latent_distribution(self, z_enc: torch):
         #  q(z|x)
-        outputs['z_mean'] = z_mean = self.z_mu_conv(z_enc)
-        outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(z_enc)
-        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * generate_tensor(z_mean)
+        z_mean = self.z_mu_conv(z_enc)
+        z_log_sigma = self.z_log_sigma_conv(z_enc)
+        z = z_mean + torch.exp(0.5 * z_log_sigma) * generate_tensor(z_mean)
 
         # q(w|x)
-        outputs['w_mean'] = w_mean = self.w_mu_conv(z_enc)
-        outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(z_enc)
-        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * generate_tensor(w_mean)
+        w_mean = self.w_mu_conv(z_enc)
+        w_log_sigma = self.w_log_sigma_conv(z_enc)
+        w = w_mean + torch.exp(0.5 * w_log_sigma) * generate_tensor(w_mean)
 
         # posterior p(z|w,c)
-        w_sampled = self.z_wc_conv(w_sampled)
-        outputs['z_wc_mean'] = z_wc_means = self.z_wc_mu_conv(w_sampled)
-        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
-        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = z_wc_log_sigma +generate_tensor(z_wc_log_sigma, 0.1)  # Add 0.1 bias
-        outputs['z_wc_sampled'] = z_wc_log_sigmas = \
-            z_wc_means + torch.exp(z_wc_log_sigmas) * generate_tensor(z_wc_means)
-
-        # decoding network p(x|z) parameter
-        outputs['x_mean'] = self.decode(z_sampled)
+        w_enc = self.z_wc_conv(w)
+        z_wc_mean = self.z_wc_mu_conv(w_enc)
+        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_enc)
+        z_wc = z_wc_mean + torch.exp(z_wc_log_sigma) * generate_tensor(z_wc_mean)
 
         # prior p(c) network
-        z_sample = torch.tile(z_sampled, [1, self.dim_c, 1, 1])
-        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_means), 2) * torch.exp(z_wc_log_sigmas)\
-                   - z_wc_log_sigmas + torch.log(torch.tensor(np.pi))
-        outputs['pc'] = self.softMax(pc_logit)
+        z_sample = torch.tile(z, [1, self.dim_c, 1, 1])
+        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_mean), 2) * torch.exp(z_wc_log_sigma) \
+                   - z_wc_log_sigma + torch.log(torch.tensor(np.pi))
+        pc = self.softMax(pc_logit)
 
-        return outputs
+        return {'z': z, 'w': w, 'z_wc': z_wc, 'pc': pc}
 
+    def _skip_forward(self, x: torch):
+        # encoding network
+        down_samples = []
+        z_enc = x
+        for layer in self.encode_down:
+            z_enc = layer(z_enc)
+            if hasattr(layer, 'conv'):
+                down_samples.append(z_enc)
+        for i, layer in enumerate(self.decode_up):
+            if hasattr(layer, 'conv'):
+                if layer.conv.stride[0] == 2:
+                    z_enc = torch.cat((z_enc, down_samples[-i-1]), 1)
+            z_enc = layer(z_enc)
 
-class DisentangledGaussianMixtureVariationalAutoEncoder(nn.Module):
-    def __init__(
-        self,
-        dimensions: int,
-        in_channels: int,
-        out_channels: int,
-        channels: Sequence[int],
-        strides: Sequence[int],
-        kernel_size: Union[Sequence[int], int] = 3,
-        up_kernel_size: Union[Sequence[int], int] = 3,
-        num_res_units: int = 0,
-        inter_channels: Optional[list] = None,
-        inter_dilations: Optional[list] = None,
-        num_inter_units: int = 2,
-        act: Optional[Union[Tuple, str]] = Act.PRELU,
-        norm: Union[Tuple, str] = Norm.INSTANCE,
-        dropout: Optional[Union[Tuple, str, float]] = None,
-        dim_c: int = 6,  # nr clusters
-        dim_z: int = 128,
-        dim_w:  int = 1,
-        c_lambda: int = 0.5,
-        restore_lr: float = 1e-3,
-        restore_steps: int = 150,
-        tv_lambda: float = 1.8
-    ) -> None:
+        # latent
+        return_dict = self._latent_distribution(z_enc)
+        x_ = return_dict['z']
 
-        super().__init__()
-        self.dimensions = dimensions
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.channels = list(channels)
-        self.strides = list(strides)
-        self.kernel_size = kernel_size
-        self.up_kernel_size = up_kernel_size
-        self.num_res_units = num_res_units
-        self.act = act
-        self.norm = norm
-        self.dropout = dropout
-        self.num_inter_units = num_inter_units
-        self.inter_channels = inter_channels if inter_channels is not None else []
-        self.inter_dilations = list(inter_dilations or [1] * len(self.inter_channels))
-        self.dim_c = dim_c
-        self.dim_z = dim_z
-        self.dim_w = dim_w
-        self.c_lambda = c_lambda
-        self.restore_lr = restore_lr
-        self.restore_steps = restore_steps
-        self.tv_lambda = tv_lambda
-        self.act = 'relu'
+        # decoding network
+        down_samples = []
+        for layer in self.encode_down:
+            down_samples.append(x_)
+            x_ = layer(x_)
+        for i, layer in enumerate(self.decode_up):
+            x_ = layer(torch.cat((x_, down_samples[-i-1]), 1))
+        return x_, return_dict
 
-        # The number of channels and strides should match
-        if len(channels) != len(strides):
-            raise ValueError("Autoencoder expects matching number of channels and strides")
+    def forward(self,  x: torch):
+        if self.skip:
+            return self._skip_forward(x)
 
-        self.encoded_channels = in_channels
-        channels_appearance = [int(channel / 4) for channel in channels]
-        self.encode_shape, self.encoded_channels = self._get_encode_module(self.encoded_channels, channels, strides)
-        self.encode_appearance, self.encoded_app_channels = \
-            self._get_encode_module(in_channels + 1, channels_appearance,  strides, name='_appearance')
+        # encoding network
+        z_enc = self.encode_up(self.encode_down(x))
 
-        self.z_mu_conv, self.latent_channels = self._get_convolution_layer(self.encoded_channels, self.dim_z,
-                                                                           'q_wz_x/z_mean')
-        self.z_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_z, 'q_wz_x/z_log_sigma')
-        self.z_log_sigma_conv.apply(self.weights_init)
-
-        self.zA_mu_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'q_wz_x/zA_mean')
-        self.zA_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_app_channels, self.dim_z, 'q_wz_x/zA_log_sigma')
-        self.zA_log_sigma_conv.apply(self.weights_init)
-
-        self.w_mu_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_mean')
-        self.w_log_sigma_conv, _ = self._get_convolution_layer(self.encoded_channels, self.dim_w, 'q_wz_x/w_log_sigma')
-        self.w_log_sigma_conv.apply(self.weights_init)
-        self.z_wc_conv, _ = self._get_convolution_layer(self.dim_w, 64, 'p_z_wc/1x1convlayer', conv_only=False)
-        self.z_wc_mu_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_mean')
-        self.z_wc_log_sigma_conv, _ = self._get_convolution_layer(64, self.dim_z*self.dim_c, 'p_z_wc/z_wc_log_sigma', bias=False)
-        self.z_wc_log_sigma_conv.apply(self.weights_init)
-
-        self.decode, _ = self._get_decode_module(self.latent_channels * 2 + 1, channels, strides, out_channels)
-        self.softMax = torch.nn.Softmax(dim=0)
-
-    @staticmethod
-    def weights_init(m):
-        if hasattr(m, 'weight'):
-            torch.nn.init.zeros_(m.weight)
-            if m.bias is not None:
-                torch.nn.init.zeros_(m.bias)
-
-    @staticmethod
-    def _get_encode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int], name='_shape'):
-        decode_channel_list = list(channels[-1::-1])
-        decode_strides = strides[::-1] or [1]
-        layer_channels = in_channels
-        encoder = nn.Sequential()
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            encoder.add_module("encode_down_" + name + "%i" %i, Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
-            layer_channels = c
-        for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            encoder.add_module("encode_up_" + name + "%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu',is_transposed=True))
-            layer_channels = c
-        return encoder, layer_channels
-
-    @staticmethod
-    def _get_decode_module(in_channels: int, channels: Sequence[int], strides: Sequence[int], out_ch):
-        decode_channel_list = list(channels[-1::-1])
-        decode_strides = strides[::-1] or [1]
-        layer_channels = in_channels
-        decoder = nn.Sequential()
-        for i, (c, s) in enumerate(zip(channels, strides)):
-            decoder.add_module("decode_down_%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu'))
-            layer_channels = c
-        for i, (c, s) in enumerate(zip(decode_channel_list, decode_strides)):
-            decoder.add_module("decode_up_%i" % i,
-                               Convolution(dimensions=2, in_channels=layer_channels, out_channels=c,
-                                           strides=s, kernel_size=5, norm='batch', act='leakyrelu', is_transposed=True))
-            layer_channels = c
-
-        decoder.add_module("decode_final", Convolution(dimensions=2, in_channels=layer_channels, out_channels=out_ch,
-                                                       strides=1, kernel_size=1, conv_only=True, act='identity'))
-        return decoder, layer_channels
-
-    def _get_convolution_layer(self, dim_in, dim_out, name='', kernel_size=1, conv_only=True, bias=True, norm='batch', act='relu'):
-        conv_layer = nn.Sequential()
-        conv_layer.add_module(name,
-                              Convolution(dimensions=self.dimensions, in_channels=dim_in, out_channels=dim_out,
-                                          kernel_size=kernel_size, conv_only=conv_only, bias=bias, norm=norm, act=act))
-        return conv_layer, dim_out
-
-    def forward(self, x: torch.Tensor, scanner: torch.Tensor) -> Any:
-        outputs = dict()
-
-        #  Encoding network
-        z_enc = self.encode_shape(x)
-        zA_enc = self.encode_appearance(torch.cat([x, scanner], dim=1))
-
-        #  q(z|x)
-        outputs['z_mean'] = z_mean = self.z_mu_conv(z_enc)
-        outputs['z_log_sigma'] = z_log_sigma = self.z_log_sigma_conv(z_enc)
-        outputs['z_sampled'] = z_sampled = z_mean + torch.exp(0.5 * z_log_sigma) * generate_tensor(z_mean)
-
-        #  q(zA|x)
-        outputs['zA_mean'] = zA_mean = self.zA_mu_conv(zA_enc)
-        outputs['zA_log_sigma'] = zA_log_sigma = self.zA_log_sigma_conv(zA_enc)
-        outputs['zA_sampled'] = zA_sampled = zA_mean + torch.exp(0.5 * zA_log_sigma) * generate_tensor(zA_mean)
-
-        # q(w|x)
-        outputs['w_mean'] = w_mean = self.w_mu_conv(z_enc)
-        outputs['w_log_sigma'] = w_log_sigma = self.w_log_sigma_conv(z_enc)
-        outputs['w_sampled'] = w_sampled = w_mean + torch.exp(0.5 * w_log_sigma) * generate_tensor(w_mean)
-
-        # posterior p(z|w,c)
-        w_sampled = self.z_wc_conv(w_sampled)
-        outputs['z_wc_mean'] = z_wc_means = self.z_wc_mu_conv(w_sampled)
-        z_wc_log_sigma = self.z_wc_log_sigma_conv(w_sampled)
-        outputs['z_wc_log_sigma'] = z_wc_log_sigmas = z_wc_log_sigma + generate_tensor(z_wc_log_sigma, 0.1)  # Add 0.1 bias
-        outputs['z_wc_sampled'] = z_wc_log_sigmas = \
-            z_wc_means + torch.exp(z_wc_log_sigmas) * generate_tensor(z_wc_means)
+        # latent
+        return_dict = self._latent_distribution(z_enc)
+        z = return_dict['z']
 
         # decoding network p(x|z) parameter
-        outputs['x_mean'] = self.decode(torch.cat([z_sampled, zA_sampled, scanner], dim=1))
-
-        # prior p(c) network
-        z_sample = torch.tile(z_sampled, [1, self.dim_c, 1, 1])
-        pc_logit = -0.5 * torch.pow(torch.subtract(z_sample, z_wc_means), 2) * torch.exp(z_wc_log_sigmas)\
-                   - z_wc_log_sigmas + torch.log(torch.tensor(np.pi))
-        outputs['pc'] = self.softMax(pc_logit)
-
-        return outputs
+        x_ = self.decode_up(self.decode_down(z))
+        return x_, return_dict
