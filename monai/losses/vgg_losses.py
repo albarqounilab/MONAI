@@ -1,7 +1,7 @@
 from torch.nn.modules.loss import _Loss
 import torch
 import torch.nn.functional as F
-from monai.networks.nets import Encoder
+from monai.networks.nets import VGGEncoder
 
 
 class PerceptualLoss(_Loss):
@@ -26,7 +26,7 @@ class PerceptualLoss(_Loss):
         super().__init__()
         self.device = device
         self.reduction = reduction
-        self.loss_network = Encoder().eval().to(self.device)
+        self.loss_network = VGGEncoder().eval().to(self.device)
 
     def forward(self, input: torch.Tensor, target: torch.Tensor):
         """
@@ -68,7 +68,7 @@ class ContentLoss(_Loss):
         self.device = device
         self.content_layers_default = ['conv_4']
         self.reduction = reduction
-        self.loss_network = Encoder().eval().to(self.device)
+        self.loss_network = VGGEncoder().eval().to(self.device)
 
     def forward(self, input: torch.Tensor, target: torch.Tensor):
         """
@@ -110,7 +110,7 @@ class StyleLoss(_Loss):
         self.reduction = reduction
         self.style_layers_default = ['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']
 
-        self.loss_network = Encoder().eval().to(self.device)
+        self.loss_network = VGGEncoder().eval().to(self.device)
 
     @staticmethod
     def gram_matrix(input):

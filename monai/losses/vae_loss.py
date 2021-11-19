@@ -90,44 +90,6 @@ class BrainPriorLoss(_Loss):
         return torch.mean(kld)
 
 
-class AtlasPriorLoss(_Loss):
-    """
-    Wrapper for pytorch GMVAE Loss
-    see You, Suhang, et al. "Unsupervised lesion detection via image restoration with a normative prior." International Conference on Medical Imaging with Deep Learning. PMLR, 2019.
-
-    """
-
-    def __init__(self, atlas, dim_c: int = 1) -> None:
-        """
-        Args
-            dim_c: int
-                the number of clusters
-        """
-        super().__init__()
-        self.atlas = atlas
-        self.loss = torch.nn.CrossEntropyLoss()
-        self.dim_c = dim_c
-
-    def forward(self, pc: torch.Tensor, atlas=None):
-        """
-        Args:
-            z_mean: tensor of size (N, H, W, C),
-                with N = nr slices, C = dim_z, H/W = height/weight of latent space
-            z_log_sigma: tensor of size (N, H, W, C),
-                with N = nr slices, C = dim_z, H/W = height/weight of latent space
-            z_wc_mean: tensor of size (N, H, W, C),
-                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
-            z_wc_log_sigma: tensor of size (N, H, W, C),
-                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
-            pc: tensor of size (N, H, W, C),
-                with N = nr slices, C = dim_z*dim_c, H/W = height/weight of latent space
-        """
-        if atlas is not None:
-            self.atlas = atlas
-        mean_con_loss = self.loss(pc, self.atlas)
-        return mean_con_loss
-
-
 class ConditionalPriorLoss(_Loss):
     """
     Wrapper for pytorch GMVAE Loss
@@ -193,6 +155,10 @@ class NormalPriorLoss(_Loss):
         """
         z_loss = 0.5 * torch.sum(torch.pow(z_mean, 2) + torch.exp(z_log_sigma) - z_log_sigma - 1, [1, 2, 3])
         mean_z_loss = torch.mean(z_loss)
+
+        # mu = z_mean
+        # log_var = z_log_sigma
+        # mean_z_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 
         return mean_z_loss
 

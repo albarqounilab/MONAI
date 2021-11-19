@@ -2,9 +2,9 @@ import torch.nn as nn
 import torchvision
 
 
-class Encoder(nn.Module):
+class VGGEncoder(nn.Module):
     def __init__(self, layers=[1, 6, 11, 20]):
-        super(Encoder, self).__init__()
+        super(VGGEncoder, self).__init__()
         vgg = torchvision.models.vgg19(pretrained=True).features
 
         self.encoder = nn.ModuleList()
