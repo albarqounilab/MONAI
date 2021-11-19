@@ -14,7 +14,8 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 import torch
 
-__all__ = ["same_padding", "stride_minus_kernel_padding", "calculate_out_shape", "gaussian_1d", "polyval"]
+__all__ = ["same_padding", "stride_minus_kernel_padding", "calculate_out_shape", "gaussian_1d", "polyval",
+           "weights_init"]
 
 
 def same_padding(
@@ -226,3 +227,10 @@ def _modified_bessel_i(n: int, x: torch.Tensor) -> torch.Tensor:
             ans = bip
     ans = ans * _modified_bessel_0(x) / bi
     return -ans if x < 0.0 and (n % 2) == 1 else ans
+
+
+def weights_init(m):
+    if hasattr(m, 'weight'):
+        torch.nn.init.zeros_(m.weight)
+        if m.bias is not None:
+            torch.nn.init.zeros_(m.bias)
