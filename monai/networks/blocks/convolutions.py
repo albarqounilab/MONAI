@@ -112,6 +112,7 @@ class Convolution(nn.Sequential):
         is_transposed: bool = False,
         padding: Optional[Union[Sequence[int], int]] = None,
         output_padding: Optional[Union[Sequence[int], int]] = None,
+        name=''
     ) -> None:
         super().__init__()
         self.dimensions = dimensions
@@ -149,11 +150,11 @@ class Convolution(nn.Sequential):
                 bias=bias,
             )
 
-        self.add_module("conv", conv)
+        self.add_module(name + 'conv', conv)
 
         if not conv_only:
             self.add_module(
-                "adn",
+                name + 'adn',
                 ADN(
                     ordering=adn_ordering,
                     in_channels=out_channels,
