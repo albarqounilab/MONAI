@@ -8,15 +8,19 @@ class StatisticsAlignmentLoss(Module):
     """
     Statistics alignment loss function for FedBias.
     """
-    def __init__(self, device: torch.device) -> None:
+    def __init__(self, device: torch.device, kl_direction: str = 'forward') -> None:
         """
         Initialization of StatisticsAlignmentLoss.
 
         :param device: torch.device
             Device on which to perform computations: torch.device('cuda:0') or torch.device('cpu').
+        :param kl_direction: str
+            Direction of the KL divergence: 'forward' or 'reverse'.
+            See https://agustinus.kristia.de/techblog/2016/12/21/forward-reverse-kl/ for further information.
         """
         super().__init__()
         self.device = device
+        self.kl_direction = kl_direction
 
     def forward(self, client_name: str, current_mean: torch.FloatTensor, current_std: torch.FloatTensor,
                 client_stats: dict) -> torch.FloatTensor:
@@ -48,9 +52,10 @@ class StatisticsAlignmentLoss(Module):
 
                 # Create multivariate normal distribution of features from other client
                 dist = Independent(Normal(mean, std), 1)
-                # NOTE: Use forward KL divergence
-                # (see https://agustinus.kristia.de/techblog/2016/12/21/forward-reverse-kl/)
-                alignment_loss = alignment_loss + kl_divergence(dist, current_dist)
+                if self.kl_direction == 'forward':
+                    alignment_loss = alignment_loss + kl_divergence(dist, current_dist)
+                elif self.kl_direction == 'reverse':
+                    alignment_loss = alignment_loss + kl_divergence(current_dist, dist)
 
         alignment_loss = alignment_loss / (len(client_stats) - 1)
         return alignment_loss
