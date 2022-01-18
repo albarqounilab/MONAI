@@ -32,7 +32,7 @@ from .multi_scale import MultiScaleLoss
 from .spatial_mask import MaskedLoss
 from .tversky import TverskyLoss
 from .entropy_loss import EntropyLoss
-from .alignment_loss import StatisticsAlignmentLoss
+from .alignment_loss import StatisticsAlignmentLoss, ClassAlignmentLoss
 from .total_variation_loss import TotalVariationLoss
 from .vgg_losses import PerceptualLoss,  ContentLoss, StyleLoss
 from torch.nn import L1Loss, MSELoss
