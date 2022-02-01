@@ -26,7 +26,7 @@ from .dice import (
 )
 from .cosine_embedding_loss import CosineEmbeddingLoss
 from .focal_loss import FocalLoss
-from .vae_loss import ReconLoss, AtlasPriorLoss, BrainPriorLoss, ConditionalPriorLoss, NormalPriorLoss, CPriorLoss
+from .vae_loss import ReconLoss, BrainPriorLoss, ConditionalPriorLoss, NormalPriorLoss, CPriorLoss
 from .image_dissimilarity import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss
 from .multi_scale import MultiScaleLoss
 from .spatial_mask import MaskedLoss
