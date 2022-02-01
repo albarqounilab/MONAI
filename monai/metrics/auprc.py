@@ -25,7 +25,6 @@ class PRCMetric(IterationMetric):
 def compute_prc(y_pred, y):
     y_pred = y_pred.cpu().detach().numpy().flatten()
     y = y.cpu().detach().numpy().flatten()
-    print(type(y_pred), type(y), y_pred.shape, y.shape)
     precisions, recalls, thresholds = precision_recall_curve(y.astype(int), y_pred)
     auprc = average_precision_score(y.astype(int), y_pred)
     return auprc, precisions, recalls, thresholds
