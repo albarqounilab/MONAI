@@ -54,38 +54,30 @@ class BrainPriorLoss(_Loss):
         super().__init__()
         self.atlas_mean = atlas_mean
         self.atlas_var = atlas_var
+        self.b, self.c, self.h, self.w = self.atlas_mean.shape
+        self.mu_atlas = self.atlas_mean.view(self.b, self.c, -1)
+        self.logsigma_atlas = self.atlas_var.view(self.b, self.c, -1)
+        self.invsigma_atlas = 1 / torch.exp(self.logsigma_atlas)
 
-    def forward(self, pred_mean: torch.Tensor, pred_var: torch.Tensor, atlas_mean: torch.Tensor = None,
-                atlas_var: torch.Tensor = None):
+        self.constant = torch.squeeze(torch.sum(self.logsigma_atlas, dim=2, keepdim=True)) - self.h * self.w
+
+    def forward(self, pred_mean: torch.Tensor, pred_var: torch.Tensor):
         """
         Args:
             pred_mean: tensor of size (N, C, H, W),
                 with N = batch, C = dim_z/channels, H/W = height/weight of latent space
             pred_var: tensor of size (N, H, W, C),
                 with N = batch, C = dim_z/channels, H/W = height/weight of latent space
-            atlas_mean: tensor of size (N, H, W, C),
-                with N = batch, C = dim_z/channels, H/W = height/weight of latent space
-            atlas_var: tensor of size (N, H, W, C),
-                with N = batch, C = dim_z/channels, H/W = height/weight of latent space
         """
 
-        if atlas_mean is not None:
-            self.atlas_mean = atlas_mean
-            self.atlas_var = atlas_var
-
-        b, c = self.atlas_mean.shape[0], self.atlas_mean.shape[1]
-
-        mu_atlas, logsigma_atlas, mu_pred, logsigma_pred = \
-            self.atlas_mean.view(b,c,-1), self.atlas_var.view(b,c,-1), pred_mean.view(b,c,-1), pred_var.view(b,c,-1)
-
-        invsigma_atlas = 1 / torch.exp(logsigma_atlas)
+        mu_pred, logsigma_pred = pred_mean.view(self.b, self.c, -1), pred_var.view(self.b, self.c, -1)
 
         log_det_pred = torch.squeeze(torch.sum(logsigma_pred, dim=2, keepdim=True))
-        trace = torch.squeeze(torch.sum(invsigma_atlas * torch.exp(logsigma_pred), dim=2, keepdim=True))
-        third_term = torch.matmul(torch.transpose(torch.unsqueeze(mu_atlas - mu_pred, -1), 2, 3),
-                     torch.unsqueeze(invsigma_atlas * (mu_atlas - mu_pred), -1))
+        trace = torch.squeeze(torch.sum(self.invsigma_atlas * torch.exp(logsigma_pred), dim=2, keepdim=True))
+        third_term = torch.matmul(torch.transpose(torch.unsqueeze(self.mu_atlas - mu_pred, -1), 2, 3),
+                     torch.unsqueeze(self.invsigma_atlas * (self.mu_atlas - mu_pred), -1))
 
-        kld = torch.mean(0.5 * (-log_det_pred + trace + third_term))
+        kld = torch.mean(0.5 * (self.constant - log_det_pred + trace + third_term))
 
         return torch.mean(kld)
 
@@ -97,7 +89,7 @@ class ConditionalPriorLoss(_Loss):
 
     """
 
-    def __init__(self, dim_c: int = 1) -> None:
+    def __init__(self, dim_c: int = 4) -> None:
         """
         Args
             dim_c: int
@@ -127,8 +119,8 @@ class ConditionalPriorLoss(_Loss):
         d_var = (torch.exp(z_log_sigma) + d_mu_2) * (torch.exp(z_wc_log_sigma) + 1e-6)
         d_logvar = -1 * (z_wc_log_sigma + z_log_sigma)
         KL = (d_var + d_logvar - 1) * 0.5
-        con_prior_loss = torch.sum(torch.squeeze(torch.matmul(KL, torch.unsqueeze(pc, -1)), -1), [1, 2, 3])
-        mean_con_loss = torch.maximum(torch.cuda.FloatTensor([[100]]), torch.mean(con_prior_loss))
+        mean_con_loss = torch.mean(torch.sum(torch.squeeze(torch.matmul(KL, torch.unsqueeze(pc, -1)), -1), [1, 2, 3]))
+        # mean_con_loss = torch.maximum(torch.cuda.FloatTensor([[100]]), torch.mean(con_prior_loss)) # cutoff
 
         return mean_con_loss
 
@@ -148,12 +140,14 @@ class NormalPriorLoss(_Loss):
     def forward(self, z_mean: torch.Tensor, z_log_sigma: torch.Tensor):
         """
         Args:
-            w_mean: tensor of size (N, C, H, W),
+            z_mean: tensor of size (N, C, H, W),
                 with N = nr slices, C = dim_z, H/W = height/weight of latent space
-            w_log_sigma: tensor of size (N, C, H, W),
+            z_log_sigma: tensor of size (N, C, H, W),
                 with N = nr slices, C = dim_z, H/W = height/weight of latent space
         """
-        z_loss = 0.5 * torch.sum(torch.pow(z_mean, 2) + torch.exp(z_log_sigma) - z_log_sigma - 1, [1, 2, 3])
+        merge_dims = [i for i in range(len(z_mean.shape))]
+        merge_dims = merge_dims[1:]
+        z_loss = 0.5 * torch.sum(torch.pow(z_mean, 2) + torch.exp(z_log_sigma) - z_log_sigma - 1, merge_dims)
         mean_z_loss = torch.mean(z_loss)
 
         # mu = z_mean
@@ -170,7 +164,7 @@ class CPriorLoss(_Loss):
 
     """
 
-    def __init__(self, dim_c: int = 6, c_lambda: int = 0.5) -> None:
+    def __init__(self, dim_c: int = 4, c_lambda: int = 0.5) -> None:
         """
         Args
         """
@@ -188,6 +182,7 @@ class CPriorLoss(_Loss):
         c_lambda = generate_tensor(closs1, self.c_lambda)
         c_loss = torch.maximum(closs1, c_lambda)
         c_loss = torch.sum(c_loss, [1, 2])
-        mean_c_loss = torch.mean(c_loss)#torch.maximum(torch.cuda.FloatTensor([[700]]), torch.mean(c_loss)) # cutoff value
+        mean_c_loss = torch.mean(c_loss)
+        #torch.maximum(torch.cuda.FloatTensor([[700]]), torch.mean(c_loss)) # cutoff value
 
         return mean_c_loss
